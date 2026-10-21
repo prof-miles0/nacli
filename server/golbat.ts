@@ -155,6 +155,41 @@ export const GOLBAT_PANELS: PanelDef[] = [
   },
 ];
 
+/**
+ * Every Golbat series the charts and the summary query: the only ones kept in
+ * memory (local-metrics.ts) out of the thousands Golbat exposes.
+ */
+export const GOLBAT_SERIES = new Set([
+  "golbat_decode_disk_encounter",
+  "golbat_decode_encounter",
+  "golbat_decode_fort_details",
+  "golbat_decode_get_friend_details",
+  "golbat_decode_get_gym_info",
+  "golbat_decode_get_map_forts",
+  "golbat_decode_gmo_type",
+  "golbat_decode_methods",
+  "golbat_decode_open_invasion",
+  "golbat_decode_quest",
+  "golbat_decode_search_player",
+  "golbat_decode_social_action_with_request",
+  "golbat_decode_start_incident",
+  "golbat_fort_change",
+  "golbat_incident_count",
+  "golbat_pokemon_count_hundo",
+  "golbat_pokemon_count_iv",
+  "golbat_pokemon_count_new",
+  "golbat_pokemon_count_nundo",
+  "golbat_pokemon_count_shiny",
+  "golbat_pokemon_stats_reset_count",
+  "golbat_raid_count",
+  "golbat_raw_processing_waiting",
+  "golbat_raw_requests",
+  "golbat_verified_pokemon_ttl",
+  "golbat_verified_pokemon_ttl_counter",
+  "golbat_worker_backlog",
+  "golbat_write_behind_queue_depth",
+]);
+
 export const GOLBAT_INTERVALS = ["1m", "10m", "30m", "1h", "6h", "12h", "1d"] as const;
 
 export function golbatPanel(

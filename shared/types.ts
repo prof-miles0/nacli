@@ -198,8 +198,9 @@ export interface AppInfo {
   title: string;
   pollIntervalMs: number;
   /** Where chart history comes from. */
+  /** "victoriametrics" when at least one Rotom has data there (the rest use memory). */
   historySource: "victoriametrics" | "memory";
-  /** Golbat section available ([golbat] + [victoriametrics] configured). */
+  /** Golbat charts available (its vm_instance in VictoriaMetrics, or its url for memory). */
   golbat: boolean;
   /** [golbat] has a url: the Dashboard map can ask Golbat for device locations. */
   golbatMap: boolean;
@@ -207,8 +208,10 @@ export interface AppInfo {
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
   /** Configured Dragonites (empty without [[dragonite]] + [victoriametrics]). */
   dragonite: DragoniteInfo[];
-  /** Where the Dragonite charts come from, and how far back they can go. */
+  /** Where the charts of every Dragonite together come from, and how far back. */
   dragoniteHistory?: { source: "victoriametrics" | "memory"; maxRangeMs: number };
+  /** How far back Golbat's charts go (VictoriaMetrics or memory). */
+  golbatHistoryMs?: number;
   instances: InstanceInfo[];
 }
 
@@ -281,6 +284,10 @@ export interface DragoniteInfo {
   rotom?: string;
   /** Its API is configured (`api_url`), so the accounts page can read it. */
   accounts: boolean;
+  /** How far back its own charts go (0: no charts for it). */
+  historyMs: number;
+  /** Its charts come from VictoriaMetrics (else from memory). */
+  fromVm: boolean;
 }
 
 export interface DragoniteMeta {

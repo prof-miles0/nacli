@@ -7,6 +7,7 @@ import { Toggle } from "@/components/table-tools";
 import { AreaSelect } from "@/components/area-select";
 import { Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
+import { useAppInfo } from "@/lib/state";
 
 const RANGES = [
   { value: String(3_600_000), label: "1h" },
@@ -21,7 +22,11 @@ const ROWS = ["Basic", "Details"];
 const INTERVAL = "10m";
 
 export function GolbatMetricsPage() {
-  const [range, setRange] = useState(RANGES[2].value);
+  const { data: app } = useAppInfo();
+  // 30 days from VictoriaMetrics; only history_retention when from memory.
+  const ranges = RANGES.filter((r) => Number(r.value) <= (app?.golbatHistoryMs || Infinity));
+  const [chosenRange, setRange] = useState(RANGES[2].value);
+  const range = ranges.some((r) => r.value === chosenRange) ? chosenRange : (ranges.at(-1)?.value ?? chosenRange);
   // Fixed 10-minute counting interval: steady, comparable values on every range.
   const inter = INTERVAL;
   const [areas, setAreas] = useState<string[]>([]);
@@ -49,7 +54,7 @@ export function GolbatMetricsPage() {
     <div className="animate-in flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-end gap-2">
         <AreaSelect areas={meta.data.areas} value={areas} onChange={setAreas} />
-        <Toggle value={range} onChange={setRange} options={RANGES} />
+        <Toggle value={range} onChange={setRange} options={ranges} />
       </div>
 
       {ROWS.map((row) => {

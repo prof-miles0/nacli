@@ -1,5 +1,4 @@
 import type {
-  HistoryPoint,
   InstanceInfo,
   InstanceMetrics,
   InstanceSummary,
@@ -7,10 +6,15 @@ import type {
   RotomStatus,
 } from "../shared/types.ts";
 import type { AppConfig, RotomInstanceConfig } from "./config.ts";
-import { parsePrometheus, responsesByStatus, summarizeMetrics } from "./metrics.ts";
+import { parsePrometheus, summarizeMetrics } from "./metrics.ts";
 
-/** Metrics are heavier (~40KB) and change slowly; fetch every Nth poll. */
-const METRICS_EVERY = 3;
+/**
+ * Rotom is read on demand, like Dragonite: a page asking for its state gets
+ * it fresh, shared by every request within this window.
+ */
+const STATUS_TTL_MS = 3000;
+/** /metrics is heavier (~40KB) and only feeds the Instances page summary. */
+const METRICS_TTL_MS = 30_000;
 
 export class RotomError extends Error {
   constructor(
@@ -105,86 +109,57 @@ class InstanceState {
   lastPollAt?: number;
   lastSuccessAt?: number;
   latencyMs?: number;
-  history: HistoryPoint[] = [];
-  private polls = 0;
-  private prevResponses?: { t: number; totals: Record<string, number> };
-  private polling = false;
+  private metricsAt = 0;
+  private inFlight?: Promise<void>;
 
   constructor(public cfg: RotomInstanceConfig) {}
 
-  async poll(app: AppConfig): Promise<void> {
-    if (this.polling) return;
-    this.polling = true;
+  /**
+   * Its state as of at most `maxAgeMs` ago: read from its API when older,
+   * once however many callers ask at the same time.
+   */
+  async fresh(app: AppConfig, maxAgeMs = STATUS_TTL_MS): Promise<void> {
+    if (this.lastPollAt !== undefined && Date.now() - this.lastPollAt < maxAgeMs) return;
+    this.inFlight ??= this.read(app).finally(() => {
+      this.inFlight = undefined;
+    });
+    return this.inFlight;
+  }
+
+  /** Forget the cached state (after an action), so the next caller reads it again. */
+  stale() {
+    this.lastPollAt = undefined;
+  }
+
+  private async read(app: AppConfig): Promise<void> {
     const started = Date.now();
     const timeout = app.requestTimeoutMs;
-    const wantMetrics = this.polls++ % METRICS_EVERY === 0;
+    const wantMetrics = started - this.metricsAt >= METRICS_TTL_MS;
     try {
-      let status: RotomStatus;
-      let config: RotomConfig;
-      let metricsText: string | undefined;
-      [status, config] = await Promise.all([
+      const [status, config] = await Promise.all([
         getJson<RotomStatus>(this.cfg, "/status", timeout),
         getJson<{ config: RotomConfig }>(this.cfg, "/config", timeout).then((r) => r.config),
       ]);
       if (wantMetrics) {
         // Metrics are optional: a failure here must not mark the instance down.
-        metricsText = await getText(this.cfg, "/metrics", timeout).catch(() => undefined);
+        const text = await getText(this.cfg, "/metrics", timeout).catch(() => undefined);
+        if (text) {
+          this.metrics = summarizeMetrics(parsePrometheus(text));
+          this.metricsAt = Date.now();
+        }
       }
       this.status = { ...status, devices: status.devices ?? [], controllers: status.controllers ?? [] };
       this.config = config;
-      if (metricsText) this.metrics = summarizeMetrics(parsePrometheus(metricsText));
       this.reachable = true;
       this.lastError = undefined;
       this.lastSuccessAt = Date.now();
       this.latencyMs = Date.now() - started;
-      this.record(app, metricsText !== undefined);
     } catch (e) {
       this.reachable = false;
       this.lastError = (e as Error).message;
     } finally {
       this.lastPollAt = Date.now();
-      this.polling = false;
     }
-  }
-
-  private record(app: AppConfig, freshMetrics: boolean) {
-    // With VictoriaMetrics configured it is the source of history; keep nothing.
-    if (!this.status || app.victoriaMetrics) {
-      this.history = [];
-      return;
-    }
-    const s = summarize(this.status);
-    const now = Date.now();
-    const point: HistoryPoint = {
-      t: now,
-      devicesConnected: s.devicesConnected,
-      workersConnected: s.workersConnected,
-      workersInUse: s.workersInUse,
-      controllers: s.controllers,
-      requestRate: s.requestRate,
-      latencyMs: s.latencyMs,
-      weightInUse: s.weightInUse,
-    };
-    if (freshMetrics && this.metrics) {
-      const totals = responsesByStatus(this.metrics);
-      const prev = this.prevResponses;
-      if (prev) {
-        const dt = (now - prev.t) / 1000;
-        const rates: Record<string, number> = {};
-        for (const [k, v] of Object.entries(totals)) {
-          const delta = v - (prev.totals[k] ?? 0);
-          // A negative delta means the instance restarted; skip that sample.
-          if (delta >= 0 && dt > 0) rates[k] = delta / dt;
-        }
-        point.responseRates = rates;
-      }
-      this.prevResponses = { t: now, totals };
-    }
-    this.history.push(point);
-    const cutoff = now - app.historyRetentionMs;
-    let drop = 0;
-    while (drop < this.history.length && this.history[drop].t < cutoff) drop++;
-    if (drop) this.history.splice(0, drop);
   }
 
   info(): InstanceInfo {
@@ -205,16 +180,12 @@ class InstanceState {
   }
 }
 
-const SAVE_EVERY_MS = 60_000;
-
 export class RotomRegistry {
   private states = new Map<string, InstanceState>();
-  private timer?: NodeJS.Timeout;
 
   constructor(private app: AppConfig) {
     this.apply(app);
   }
-
 
   /** Applies a (re)loaded config, keeping state for instances that survive. */
   apply(app: AppConfig) {
@@ -230,18 +201,12 @@ export class RotomRegistry {
       }
     }
     this.states = next;
-    this.restart();
   }
 
-  private restart() {
-    if (this.timer) clearInterval(this.timer);
-    const tick = () => Promise.all([...this.states.values()].map((s) => s.poll(this.app)));
-    void tick();
-    this.timer = setInterval(tick, this.app.pollIntervalMs);
-  }
-
-  stop() {
-    if (this.timer) clearInterval(this.timer);
+  /** Every instance's state, read from its API when older than `maxAgeMs`. */
+  async fresh(maxAgeMs?: number) {
+    await Promise.all([...this.states.values()].map((s) => s.fresh(this.app, maxAgeMs)));
+    return this;
   }
 
   list(): InstanceInfo[] {

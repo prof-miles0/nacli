@@ -2,7 +2,7 @@
 // VictoriaMetrics is not configured and the samples live in memory
 // (local-metrics.ts). Supported: selectors with =, !=, =~, !~ matchers and
 // [range]; rate, increase, avg/min/max_over_time, timestamp, scalar, time,
-// round; sum/min/max/avg/count with by/without; + - * / between vectors
+// round, clamp_min, clamp_max; sum/min/max/avg/count with by/without; + - * / between vectors
 // (one-to-one on all labels) and scalars; comparison filters (> < >= <= == !=).
 
 export type Labels = Record<string, string>;
@@ -314,6 +314,12 @@ export function evaluate(node: Node, src: SeriesSource, t: number): Val {
       const v = evaluate(node.args[0], src, t);
       if (fn === "scalar") return { k: "scalar", v: v.k === "vector" ? (v.s.length === 1 ? v.s[0].v : NaN) : v.v };
       if (fn === "round" && v.k === "vector") return { k: "vector", s: v.s.map((x) => ({ labels: withoutName(x.labels), v: Math.round(x.v) })) };
+      if ((fn === "clamp_min" || fn === "clamp_max") && v.k === "vector") {
+        const lim = evaluate(node.args[1], src, t);
+        if (lim?.k !== "scalar") throw new Error(`${fn} needs a number`);
+        const f = fn === "clamp_min" ? Math.max : Math.min;
+        return { k: "vector", s: v.s.map((x) => ({ labels: withoutName(x.labels), v: f(x.v, lim.v) })) };
+      }
       throw new Error(`unsupported function: ${fn}`);
     }
     case "agg": {

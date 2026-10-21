@@ -39,7 +39,7 @@ import {
   SESSION_COOKIE,
   verifySession,
 } from "./auth.ts";
-import { type AppConfig, loadConfig, type VictoriaMetricsConfig } from "./config.ts";
+import { type AppConfig, type DragoniteConfig, loadConfig, type RotomInstanceConfig, type VictoriaMetricsConfig } from "./config.ts";
 import { RotomRegistry, rotomFetch } from "./rotom.ts";
 import {
   controllerSource,
@@ -51,7 +51,7 @@ import {
   sourceMatches,
 } from "./dragonite.ts";
 import { runPanel, vmScalars } from "./vmpanels.ts";
-import { LocalMetrics } from "./local-metrics.ts";
+import { LOCAL_GOLBAT, LocalMetrics, localRotom } from "./local-metrics.ts";
 import {
   ACCOUNT_SORTS,
   type AreaPatch,
@@ -105,15 +105,90 @@ const STATIC_DIR = process.env.STATIC_DIR ?? "dist/web";
 
 let cfg: AppConfig = loadConfig(CONFIG_PATH);
 const registry = new RotomRegistry(cfg);
-// Dragonite history in memory, used only when [victoriametrics] is missing.
+// History in memory, read from /metrics only for the instances whose charts
+// VictoriaMetrics does not cover (no [victoriametrics], no vm_instance, or no
+// data for it there). Set again after each VictoriaMetrics check.
 const localMetrics = new LocalMetrics();
-localMetrics.apply(cfg);
+function applyMemory() {
+  localMetrics.apply(cfg, {
+    rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.vmInstance ?? ""),
+    dragonite: (id) => !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.vmInstance ?? ""),
+    golbat: !onVm("golbat", cfg.golbat?.vmInstance ?? ""),
+  });
+}
+/** The in-memory history, queried as if it were VictoriaMetrics. */
+const LOCAL_VM: VictoriaMetricsConfig = { url: "memory", headers: {}, instanceLabel: "instance", selector: "", local: localMetrics };
+
+// ---------- Which instances VictoriaMetrics has data for ----------
+
+type VmKind = "rotom" | "dragonite" | "golbat";
+/** A series each kind always exposes: seen in the last hour = VictoriaMetrics has that instance. */
+const VM_PROBE: Record<VmKind, string> = {
+  rotom: "rotom_ng_workers_connected",
+  dragonite: "dragonite_location_handled_counter",
+  golbat: "golbat_pokemon_count_new",
+};
+const VM_CHECK_MS = 5 * 60_000;
+/** `${kind}:${vm_instance}` with recent data; undefined until the first check. */
+let vmReady: Set<string> | undefined;
+
+/**
+ * Whether an instance's charts come from VictoriaMetrics: only with
+ * [victoriametrics], a vm_instance, and data for it there. Before the first
+ * check it is assumed, so charts do not start empty.
+ */
+function onVm(kind: VmKind, vmInstance: string) {
+  if (!cfg.victoriaMetrics || !vmInstance) return false;
+  return vmReady ? vmReady.has(`${kind}:${vmInstance}`) : true;
+}
+
+async function checkVm() {
+  const vm = cfg.victoriaMetrics;
+  const next = new Set<string>();
+  if (vm) {
+    const L = vm.instanceLabel;
+    const wanted: Record<VmKind, string[]> = {
+      rotom: cfg.instances.map((i) => i.vmInstance).filter(Boolean),
+      dragonite: cfg.dragonite.map((d) => d.vmInstance).filter(Boolean),
+      golbat: cfg.golbat?.vmInstance ? [cfg.golbat.vmInstance] : [],
+    };
+    for (const kind of Object.keys(wanted) as VmKind[]) {
+      const names = wanted[kind];
+      if (!names.length) continue;
+      const re = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      // Rotom's queries add the global selector; the others never did.
+      const extra = kind === "rotom" && vm.selector ? `,${vm.selector}` : "";
+      try {
+        const found = await vmScalars(vm, `count by (${L}) (last_over_time(${VM_PROBE[kind]}{${L}=~"${re}"${extra}}[1h]))`, L, 10_000);
+        for (const n of names) if (found.has(n)) next.add(`${kind}:${n}`);
+      } catch (e) {
+        console.error(`[vm] could not check ${kind} data in VictoriaMetrics, using memory: ${(e as Error).message}`);
+      }
+    }
+    // Say which instances fall back to memory, once per change.
+    for (const kind of Object.keys(wanted) as VmKind[]) {
+      for (const n of wanted[kind]) {
+        const k = `${kind}:${n}`;
+        const before = vmReady ? vmReady.has(k) : undefined;
+        if (before !== next.has(k)) {
+          console.log(`[vm] ${kind} "${n}": ${next.has(k) ? "data in VictoriaMetrics" : "no data in VictoriaMetrics, charts from memory"}`);
+        }
+      }
+    }
+  }
+  vmReady = next;
+  applyMemory();
+}
+applyMemory();
+void checkVm();
+setInterval(() => void checkVm(), VM_CHECK_MS).unref();
 
 function reload(reason: string) {
   try {
     cfg = loadConfig(CONFIG_PATH);
     registry.apply(cfg);
-    localMetrics.apply(cfg);
+    applyMemory();
+    void checkVm();
     console.log(`[config] reloaded (${reason}): ${cfg.instances.length} instances, ${cfg.users.length} users`);
   } catch (e) {
     console.error(`[config] reload failed, keeping the previous configuration: ${(e as Error).message}`);
@@ -194,23 +269,34 @@ app.use("/api/*", async (c, next) => {
 
 // ---------- Dashboard data ----------
 
-app.get("/api/app", (c) =>
-  c.json<AppInfo>({
+app.get("/api/app", async (c) => {
+  await registry.fresh();
+  return c.json<AppInfo>({
     title: cfg.title,
     pollIntervalMs: cfg.pollIntervalMs,
-    historySource: cfg.victoriaMetrics ? "victoriametrics" : "memory",
+    historySource: cfg.instances.some((i) => onVm("rotom", i.vmInstance)) ? "victoriametrics" : "memory",
     golbat: !!golbatCtx(),
     golbatMap: !!cfg.golbat?.api,
     map: cfg.map,
-    dragonite: dragoniteVm() ? cfg.dragonite.map(({ id, name, rotom, api }) => ({ id, name, rotom, accounts: !!api })) : [],
-    dragoniteHistory: dragoniteVm()
-      ? { source: cfg.victoriaMetrics ? "victoriametrics" : "memory", maxRangeMs: dragoniteMaxRange() }
-      : undefined,
+    dragonite: cfg.dragonite.map(({ id, name, rotom, api, vmInstance }) => ({
+      id,
+      name,
+      rotom,
+      accounts: !!api,
+      historyMs: dragoniteSource([id])?.maxRangeMs ?? 0,
+      fromVm: onVm("dragonite", vmInstance),
+    })),
+    dragoniteHistory: (() => {
+      const all = dragoniteSource();
+      return all ? { source: all.source === "vm" ? "victoriametrics" : "memory", maxRangeMs: all.maxRangeMs } : undefined;
+    })(),
+    golbatHistoryMs: golbatCtx()?.maxRangeMs,
     instances: registry.list(),
-  }),
-);
+  });
+});
 
-app.get("/api/status", (c) => {
+app.get("/api/status", async (c) => {
+  await registry.fresh();
   const only = c.req.query("instance");
   const out: MergedStatus = { devices: [], workers: [], controllers: [] };
   for (const s of registry.all()) {
@@ -249,16 +335,28 @@ function rangeParam(raw: string | undefined, max: number) {
 // ---------- Golbat (VictoriaMetrics) ----------
 
 /** Golbat's stored metrics: need [victoriametrics] and its vm_instance there. */
+/**
+ * Where Golbat's charts come from: VictoriaMetrics when its vm_instance has
+ * data there, else the history kept in memory from its /metrics (needs url).
+ */
 function golbatCtx() {
-  const vm = cfg.victoriaMetrics;
   const golbat = cfg.golbat;
-  return vm && golbat?.vmInstance ? { vm, golbat } : undefined;
+  if (!golbat) return undefined;
+  if (cfg.victoriaMetrics && onVm("golbat", golbat.vmInstance)) {
+    return { vm: cfg.victoriaMetrics, golbat, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
+  }
+  if (localMetrics.has(LOCAL_GOLBAT)) {
+    return { vm: LOCAL_VM, golbat: { ...golbat, selector: `instance="${LOCAL_GOLBAT}"` }, source: "memory" as const, maxRangeMs: localMetrics.retention };
+  }
+  return undefined;
 }
+
+const NO_GOLBAT = { error: "requires url in [golbat] (or vm_instance with [victoriametrics])" };
 
 app.get("/api/golbat/meta", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
-  const areas = await cachedVm("golbat:areas", 60_000 * 240 * 5, () => golbatAreas(ctx.vm, ctx.golbat, 20_000)).catch(
+  if (!ctx) return c.json(NO_GOLBAT, 404);
+  const areas = await cachedVm(`golbat:${ctx.source}:areas`, 60_000 * 240 * 5, () => golbatAreas(ctx.vm, ctx.golbat, 20_000)).catch(
     () => [] as string[],
   );
   return c.json({
@@ -270,7 +368,7 @@ app.get("/api/golbat/meta", async (c) => {
 
 app.get("/api/golbat/panel/:id", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
+  if (!ctx) return c.json(NO_GOLBAT, 404);
   const panel = GOLBAT_PANELS.find((p) => p.id === c.req.param("id"));
   if (!panel) return c.json({ error: "unknown chart" }, 404);
   const inter = c.req.query("inter") ?? "10m";
@@ -278,10 +376,10 @@ app.get("/api/golbat/panel/:id", async (c) => {
   // Repeated ?area=… params; sorted so the cache key does not depend on click order.
   const areas = [...new Set((c.req.queries("area") ?? []).filter(Boolean))].sort();
   if (areas.length > 50) return c.json({ error: "too many areas" }, 400);
-  const rangeMs = rangeParam(c.req.query("range"), MAX_VM_RANGE_MS);
+  const rangeMs = rangeParam(c.req.query("range"), ctx.maxRangeMs);
   const stepMs = Math.max(30_000, Math.ceil(rangeMs / 240 / 10_000) * 10_000);
   try {
-    const data = await cachedVm(`golbat:${panel.id}:${rangeMs}:${inter}:${areas.join("|")}`, rangeMs, () =>
+    const data = await cachedVm(`golbat:${ctx.source}:${panel.id}:${rangeMs}:${inter}:${areas.join("|")}`, rangeMs, () =>
       golbatPanel(ctx.vm, ctx.golbat, panel, { rangeMs, stepMs, inter, areas }, 20_000),
     );
     return c.json(data);
@@ -292,9 +390,9 @@ app.get("/api/golbat/panel/:id", async (c) => {
 
 app.get("/api/golbat/summary", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
+  if (!ctx) return c.json(NO_GOLBAT, 404);
   try {
-    return c.json(await cachedVm("golbat:summary", 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)));
+    return c.json(await cachedVm(`golbat:${ctx.source}:summary`, 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)));
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
@@ -303,59 +401,68 @@ app.get("/api/golbat/summary", async (c) => {
 // ---------- Dragonite (VictoriaMetrics + Rotom controllers) ----------
 
 const NO_DRAGONITE = {
-  error: "requires [stack.dragonite] and, without [victoriametrics], its API url to read /metrics",
+  error: "requires [stack.dragonite] with its API url (or vm_instance with [victoriametrics])",
 };
 
 /**
- * Where the Dragonite charts get their series: VictoriaMetrics, or else the
- * samples this server keeps from each Dragonite's own /metrics.
+ * Where the charts of these Dragonites (every one when `ids` is empty) get
+ * their series: VictoriaMetrics when each of them has data there under its
+ * vm_instance, else the samples kept in memory from their /metrics. A chart
+ * adds several Dragonites together, so it never mixes the two: one Dragonite
+ * without data in VictoriaMetrics puts the whole chart on memory. `all` is the
+ * stack list to build selectors from (in memory they are kept under their id).
  */
-function dragoniteVm(): VictoriaMetricsConfig | undefined {
+function dragoniteSource(ids: string[] = []) {
   if (!cfg.dragonite.length) return undefined;
-  if (cfg.victoriaMetrics) return cfg.victoriaMetrics;
-  if (!localMetrics.active) return undefined;
-  return { url: "memoria", headers: {}, instanceLabel: "instance", selector: "", local: localMetrics };
+  const chosen = ids.length ? cfg.dragonite.filter((d) => ids.includes(d.id)) : cfg.dragonite;
+  if (cfg.victoriaMetrics && chosen.every((d) => onVm("dragonite", d.vmInstance))) {
+    return { vm: cfg.victoriaMetrics, all: cfg.dragonite, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
+  }
+  if (chosen.every((d) => localMetrics.has(d.id))) {
+    return { vm: LOCAL_VM, all: cfg.dragonite.map((d) => ({ ...d, vmInstance: d.id })), source: "memory" as const, maxRangeMs: localMetrics.retention };
+  }
+  return undefined;
 }
 
-const dragoniteMaxRange = () => (cfg.victoriaMetrics ? MAX_VM_RANGE_MS : localMetrics.retention);
-
 app.get("/api/dragonite/meta", async (c) => {
-  const vm = dragoniteVm();
-  if (!vm) return c.json(NO_DRAGONITE, 404);
-  const all = cfg.dragonite;
-  const areas = await cachedVm("dragonite:areas", 60_000 * 240 * 5, () => dragoniteAreas(vm, all, 20_000)).catch(
+  const src = dragoniteSource();
+  if (!src) return c.json(NO_DRAGONITE, 404);
+  const areas = await cachedVm(`dragonite:${src.source}:areas`, 60_000 * 240 * 5, () => dragoniteAreas(src.vm, src.all, 20_000)).catch(
     () => [] as string[],
   );
   // Each stack's own areas, so the filter offers only those of the stack shown.
   const byStack = Object.fromEntries(
     await Promise.all(
-      all.map(async (d) => [
-        d.id,
-        await cachedVm(`dragonite:areas:${d.id}`, 60_000 * 240 * 5, () => dragoniteAreas(vm, all, 20_000, [d.id])).catch(
-          () => [] as string[],
-        ),
-      ]),
+      cfg.dragonite.map(async (d) => {
+        const one = dragoniteSource([d.id]);
+        const list = one
+          ? await cachedVm(`dragonite:${one.source}:areas:${d.id}`, 60_000 * 240 * 5, () => dragoniteAreas(one.vm, one.all, 20_000, [d.id])).catch(
+              () => [] as string[],
+            )
+          : [];
+        return [d.id, list];
+      }),
     ),
   );
   return c.json({ rows: DRAGONITE_ROWS, areas, areasByStack: byStack, panels: DRAGONITE_PANELS.map(({ queries, ...p }) => p) });
 });
 
 app.get("/api/dragonite/panel/:id", async (c) => {
-  const vm = dragoniteVm();
-  if (!vm) return c.json(NO_DRAGONITE, 404);
   const panel = DRAGONITE_PANELS.find((p) => p.id === c.req.param("id"));
   if (!panel) return c.json({ error: "unknown chart" }, 404);
   const areas = [...new Set((c.req.queries("area") ?? []).filter(Boolean))].sort();
   if (areas.length > 50) return c.json({ error: "too many areas" }, 400);
   // Repeated ?instance=<dragonite id>; unknown ids are ignored, none means all.
   const ids = [...new Set(c.req.queries("instance") ?? [])].filter((id) => cfg.dragonite.some((d) => d.id === id)).sort();
-  const rangeMs = rangeParam(c.req.query("range"), dragoniteMaxRange());
+  const src = dragoniteSource(ids);
+  if (!src) return c.json(NO_DRAGONITE, 404);
+  const rangeMs = rangeParam(c.req.query("range"), src.maxRangeMs);
   const stepMs = Math.max(30_000, Math.ceil(rangeMs / 240 / 10_000) * 10_000);
-  const base = dragoniteBase(cfg.dragonite, ids);
+  const base = dragoniteBase(src.all, ids);
   try {
-    const data = await cachedVm(`dragonite:${panel.id}:${rangeMs}:${ids.join("|")}:${areas.join("|")}`, rangeMs, () =>
+    const data = await cachedVm(`dragonite:${src.source}:${panel.id}:${rangeMs}:${ids.join("|")}:${areas.join("|")}`, rangeMs, () =>
       runPanel(
-        vm,
+        src.vm,
         panel,
         { base, areas, rangeMs, stepMs, inter: "10m", scanMetric: "dragonite_location_handled_counter" },
         20_000,
@@ -368,12 +475,24 @@ app.get("/api/dragonite/panel/:id", async (c) => {
 });
 
 app.get("/api/dragonite/summary", async (c) => {
-  const vm = dragoniteVm();
-  if (!vm) return c.json(NO_DRAGONITE, 404);
+  if (!dragoniteSource() && !cfg.dragonite.some((d) => dragoniteSource([d.id]))) return c.json(NO_DRAGONITE, 404);
   const all = cfg.dragonite;
   try {
-    const stats = await cachedVm("dragonite:stats", 60_000 * 240 / 2, () => dragoniteStats(vm, all, 20_000));
+    // These figures are per Dragonite, so each one can come from its own source.
+    const groups = new Map<string, { vm: VictoriaMetricsConfig; list: DragoniteConfig[] }>();
+    for (const d of all) {
+      const one = dragoniteSource([d.id]);
+      if (!one) continue;
+      const g = groups.get(one.source) ?? { vm: one.vm, list: [] };
+      g.list.push(one.all.find((x) => x.id === d.id)!);
+      groups.set(one.source, g);
+    }
+    const key = [...groups].map(([k, g]) => `${k}=${g.list.map((d) => d.id).join(",")}`).join(";");
+    const stats = await cachedVm(`dragonite:stats:${key}`, 60_000 * 240 / 2, async () =>
+      (await Promise.all([...groups.values()].map((g) => dragoniteStats(g.vm, g.list, 20_000)))).flat(),
+    );
     // Live links come from the Rotoms: each controller names its Dragonite in its user agent.
+    await registry.fresh();
     const links = new Map<string, Map<string, number>>();
     const unmatched: DragoniteSummary["unmatched"] = [];
     for (const s of registry.all()) {
@@ -395,7 +514,7 @@ app.get("/api/dragonite/summary", async (c) => {
     }
     return c.json<DragoniteSummary>({
       instances: all.map((d) => ({
-        ...stats.find((x) => x.id === d.id)!,
+        ...(stats.find((x) => x.id === d.id) ?? { id: d.id, locations: 0, accountsOk: 0, accountsLimited: 0, noWorkers: 0, invasions: 0 }),
         name: d.name,
         rotom: d.rotom,
         links: [...(links.get(d.id) ?? [])].map(([rotomId, controllers]) => ({ rotomId, controllers })),
@@ -1038,7 +1157,7 @@ app.get("/api/dragonite/:id/areas", async (c) => {
   const d = dragoniteWithApi(c.req.param("id"));
   if (!d) return c.json({ error: "Dragonite has no url in its [stack.dragonite]" }, 404);
   try {
-    const data = await cachedVm(`dragonite-areas:${d.id}`, 0, () => dragoniteAreaList(d, cfg.requestTimeoutMs));
+    const [data] = await Promise.all([cachedVm(`dragonite-areas:${d.id}`, 0, () => dragoniteAreaList(d, cfg.requestTimeoutMs)), registry.fresh()]);
     // Name each worker's device as Rotom knows it (the device_id is Rotom's worker id).
     const devices = new Map<string, { rotomId: string; device: string }>();
     for (const s of registry.all()) {
@@ -1133,7 +1252,7 @@ app.get("/api/dragonite/:id/modes", async (c) => {
   const d = dragoniteWithApi(c.req.param("id"));
   if (!d) return c.json({ error: "Dragonite has no url in its [stack.dragonite]" }, 404);
   try {
-    const data = await cachedVm(`dragonite-modes:${d.id}`, 0, () => unboundModes(d, cfg.requestTimeoutMs));
+    const [data] = await Promise.all([cachedVm(`dragonite-modes:${d.id}`, 0, () => unboundModes(d, cfg.requestTimeoutMs)), registry.fresh()]);
     const tag = rotomDeviceTagger();
     return c.json({ ...data, modes: data.modes.map((m) => (m.live ? { ...m, live: { ...m.live, workers: m.live.workers.map(tag) } } : m)) });
   } catch (e) {
@@ -1498,7 +1617,7 @@ app.post(`/api/dragonite/:id/control/:action{${Object.keys(DRAGONITE_CONTROLS).j
 });
 
 app.get("/api/system-status", async (c) => {
-  const vm = dragoniteVm();
+  await registry.fresh();
   const dragonite = await Promise.all(
     cfg.dragonite.map(async (d): Promise<DragoniteStatus> => {
       const base: DragoniteStatus = { id: d.id, name: d.name, rotom: d.rotom, reachable: false, rateEvents: rateSeen.get(d.id)?.events ?? [] };
@@ -1507,9 +1626,12 @@ app.get("/api/system-status", async (c) => {
       const [conf, rate, raw] = await Promise.allSettled([
         instanceConfig(d, cfg.requestTimeoutMs),
         rateLimit(d, cfg.requestTimeoutMs),
-        vm
-          ? vmScalars(vm, `sum by (reason) (increase(dragonite_raw_sends_discarded{${dragoniteBase(cfg.dragonite, [d.id])}}[15m]))`, "reason", 10_000)
-          : Promise.reject(new Error("no metrics")),
+        (() => {
+          const src = dragoniteSource([d.id]);
+          return src
+            ? vmScalars(src.vm, `sum by (reason) (increase(dragonite_raw_sends_discarded{${dragoniteBase(src.all, [d.id])}}[15m]))`, "reason", 10_000)
+            : Promise.reject(new Error("no metrics"));
+        })(),
       ]);
       const out: DragoniteStatus = { ...base, latencyMs: Date.now() - t0 };
       if (conf.status === "fulfilled") {
@@ -1537,7 +1659,7 @@ app.get("/api/system-status", async (c) => {
   if (cfg.golbat) {
     const ctx = golbatCtx();
     const [summary, health] = await Promise.allSettled([
-      ctx ? cachedVm("golbat:summary", 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)) : Promise.reject(new Error("no metrics")),
+      ctx ? cachedVm(`golbat:${ctx.source}:summary`, 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)) : Promise.reject(new Error("no metrics")),
       cfg.golbat.api
         ? fetch(`${cfg.golbat.api.url}/health`, { headers: cfg.golbat.api.headers, signal: AbortSignal.timeout(cfg.requestTimeoutMs) }).then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1560,7 +1682,7 @@ app.get("/api/system-status", async (c) => {
     releases,
     dragonite,
     golbat,
-    victoriaMetrics: { configured: !!cfg.victoriaMetrics, local: !cfg.victoriaMetrics && !!vm },
+    victoriaMetrics: { configured: !!cfg.victoriaMetrics, local: localMetrics.active },
     rotomReleases,
     rotom: registry.list().map((i) => ({ id: i.id, name: i.name, version: i.config?.version, ...rotomUpdate(i.config?.version) })),
   });
@@ -1569,10 +1691,12 @@ app.get("/api/system-status", async (c) => {
 /** Last controller seen on each Rotom worker id, so a point left idle still has a name. */
 const lastController = new Map<string, { name: string; at: number }>();
 
-// Keep it filled from what the Rotoms already report, map open or not.
+// Keep it filled from what the Rotoms report. Rotom is read on demand, so only
+// a recent read counts: an old one would keep vouching for controllers gone.
 setInterval(() => {
   const now = Date.now();
   for (const s of registry.all()) {
+    if (!s.lastSuccessAt || now - s.lastSuccessAt > 15_000) continue;
     for (const ctl of s.status?.controllers ?? []) if (ctl.worker_id) lastController.set(ctl.worker_id, { name: ctl.id, at: now });
   }
   // A day without that controller is long enough to forget it.
@@ -1592,6 +1716,7 @@ function controllerOf(id: string, now?: string): Pick<MapDevice, "controller" | 
 // sent data from; Rotom and Dragonite say which device, worker and controller it is.
 /** Golbat's device locations joined with Rotom and Dragonite (the map's data). */
 async function mapDevices(golbat: { url: string; headers: Record<string, string> }): Promise<MapDevice[]> {
+  await registry.fresh();
   const devices = await cachedVm("golbat:devices", 0, async () => {
     const res = await fetch(`${golbat.url}/api/devices/all`, {
       headers: golbat.headers,
@@ -1772,12 +1897,56 @@ app.get("/api/golbat/trail", (c) => {
   return c.json(withoutJumps((trails.get(trailKey(instance, controller)) ?? []).filter((p) => p.t >= since)));
 });
 
-app.get("/api/controller-demand", async (c) => {
+/** The Rotom instances whose charts come from VictoriaMetrics (data there under their vm_instance). */
+/** The Rotom instances whose charts come from VictoriaMetrics (data there under their vm_instance). */
+const rotomOnVm = () => cfg.instances.filter((i) => onVm("rotom", i.vmInstance));
+/** The rest, kept in memory: under localRotom(id) there, so their queries use that. */
+const rotomInMemory = () =>
+  cfg.instances.filter((i) => !onVm("rotom", i.vmInstance) && localMetrics.has(localRotom(i.id))).map((i) => ({ ...i, vmInstance: localRotom(i.id) }));
+
+/**
+ * Runs one Rotom chart query on both sources, each with its own instances,
+ * and joins the per-instance results (they never overlap).
+ */
+async function rotomBoth<T>(
+  key: string,
+  rangeMs: number,
+  run: (vm: VictoriaMetricsConfig, list: RotomInstanceConfig[]) => Promise<Record<string, T>>,
+): Promise<Record<string, T>> {
   const vm = cfg.victoriaMetrics;
-  if (!vm) return c.json({ error: "requires [victoriametrics] in config.toml" }, 404);
+  const fromVm = vm ? rotomOnVm() : [];
+  const fromMemory = rotomInMemory();
+  const [a, b] = await Promise.all([
+    vm && fromVm.length
+      ? cachedVm(`${key}:vm:${fromVm.map((i) => i.id).join(",")}`, rangeMs, () => run(vm, fromVm)).catch((e) => {
+          // VictoriaMetrics failing: the other instances still show.
+          console.error(`[vm] ${key}: ${(e as Error).message}`);
+          return {} as Record<string, T>;
+        })
+      : ({} as Record<string, T>),
+    fromMemory.length ? run(LOCAL_VM, fromMemory) : ({} as Record<string, T>),
+  ]);
+  return { ...a, ...b };
+}
+
+const NO_ROTOM_HISTORY = { error: "no RotomNG has history yet" };
+
+// Each instance has its own series here, so they can mix: VictoriaMetrics for
+// those with data there, the history kept in memory for the rest.
+app.get("/api/history", async (c) => {
+  const rangeMs = rangeParam(c.req.query("range"), rotomOnVm().length ? MAX_VM_RANGE_MS : cfg.historyRetentionMs);
+  try {
+    return c.json(await rotomBoth(`hist:${rangeMs}`, rangeMs, (vm, list) => vmHistory(vm, list, rangeMs, 20_000)));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+app.get("/api/controller-demand", async (c) => {
+  if (!rotomOnVm().length && !rotomInMemory().length) return c.json(NO_ROTOM_HISTORY, 404);
   const windowS = 3600;
   try {
-    const data = await cachedVm("demand", 60_000 * 240, () => vmControllerDemand(vm, cfg.instances, windowS, 20_000));
+    const data = await rotomBoth("demand", 60_000 * 240, (vm, list) => vmControllerDemand(vm, list, windowS, 20_000));
     return c.json({ windowS, instances: data });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
@@ -1785,41 +1954,15 @@ app.get("/api/controller-demand", async (c) => {
 });
 
 app.get("/api/history/device/:metric", async (c) => {
-  const vm = cfg.victoriaMetrics;
-  if (!vm) return c.json({ error: "requires [victoriametrics] in config.toml" }, 404);
+  if (!rotomOnVm().length && !rotomInMemory().length) return c.json(NO_ROTOM_HISTORY, 404);
   const metric = c.req.param("metric") as DeviceMetric;
   if (!DEVICE_METRICS.includes(metric)) return c.json({ error: "unknown metric" }, 400);
-  const rangeMs = rangeParam(c.req.query("range"), MAX_VM_RANGE_MS);
+  const rangeMs = rangeParam(c.req.query("range"), rotomOnVm().length ? MAX_VM_RANGE_MS : cfg.historyRetentionMs);
   try {
-    return c.json(
-      await cachedVm(`dev:${metric}:${rangeMs}`, rangeMs, () =>
-        vmDeviceSeries(vm, cfg.instances, metric, rangeMs, 20_000),
-      ),
-    );
+    return c.json(await rotomBoth(`dev:${metric}:${rangeMs}`, rangeMs, (vm, list) => vmDeviceSeries(vm, list, metric, rangeMs, 20_000)));
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
-});
-
-app.get("/api/history", async (c) => {
-  const vm = cfg.victoriaMetrics;
-  const maxRange = vm ? MAX_VM_RANGE_MS : cfg.historyRetentionMs;
-  const rangeMs = rangeParam(c.req.query("range"), maxRange);
-
-  if (vm) {
-    try {
-      return c.json(await cachedVm(`hist:${rangeMs}`, rangeMs, () => vmHistory(vm, cfg.instances, rangeMs, 20_000)));
-    } catch (e) {
-      return c.json({ error: (e as Error).message }, 502);
-    }
-  }
-
-  const since = Date.now() - rangeMs;
-  const out: Record<string, HistoryPoint[]> = {};
-  for (const s of registry.all()) {
-    out[s.cfg.id] = s.history.filter((p) => p.t >= since);
-  }
-  return c.json(out);
 });
 
 // ---------- Proxy to a RotomNG instance (actions, jobs) ----------
@@ -1905,8 +2048,8 @@ app.all("/api/rotom/:id/*", async (c) => {
       const v = res.headers.get(h);
       if (v) headers.set(h, v);
     }
-    // Refresh soon so the UI reflects the action.
-    if (method === "PUT") setTimeout(() => void state.poll(cfg), 500);
+    // The next read asks Rotom again, so the UI reflects the action.
+    if (method === "PUT") state.stale();
     return new Response(res.body, { status: res.status, headers });
   } catch (e) {
     return c.json({ error: `${state.cfg.name}: ${(e as Error).message}` }, 502);
@@ -1927,7 +2070,6 @@ const server = serve({ fetch: app.fetch, hostname: cfg.host, port: cfg.port }, (
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
-    registry.stop();
     server.close();
     process.exit(0);
   });

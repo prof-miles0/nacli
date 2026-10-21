@@ -4,6 +4,7 @@
 
 import type { HistoryPoint } from "../shared/types.ts";
 import type { RotomInstanceConfig, VictoriaMetricsConfig } from "./config.ts";
+import { vmPost } from "./vmpanels.ts";
 
 interface RangeResult {
   metric: Record<string, string>;
@@ -18,6 +19,7 @@ export function stepFor(rangeMs: number): number {
   return Math.max(10_000, Math.ceil(rangeMs / 240 / 10_000) * 10_000);
 }
 
+/** A range query, to VictoriaMetrics or to the history kept in memory (vm.local). */
 async function queryRange(
   vm: VictoriaMetricsConfig,
   query: string,
@@ -26,15 +28,12 @@ async function queryRange(
   stepS: number,
   timeoutMs: number,
 ): Promise<RangeResult[]> {
-  const body = new URLSearchParams({ query, start: String(start), end: String(end), step: `${stepS}s` });
-  const res = await fetch(`${vm.url}/api/v1/query_range`, {
-    method: "POST",
-    headers: { ...vm.headers, "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) throw new Error(`VictoriaMetrics HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const json = (await res.json()) as { status: string; data?: { result: RangeResult[] }; error?: string };
+  const params = { query, start: String(start), end: String(end), step: `${stepS}s` };
+  const json = (await vmPost(vm, "/api/v1/query_range", params, timeoutMs)) as unknown as {
+    status: string;
+    data?: { result: RangeResult[] };
+    error?: string;
+  };
   if (json.status !== "success") throw new Error(`VictoriaMetrics: ${json.error ?? "error"}`);
   return json.data?.result ?? [];
 }
@@ -206,14 +205,9 @@ export async function vmControllerDemand(
   const L = vm.instanceLabel;
   const sel = selector(vm, instances);
   const instant = async (query: string) => {
-    const res = await fetch(`${vm.url}/api/v1/query`, {
-      method: "POST",
-      headers: { ...vm.headers, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ query }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) throw new Error(`VictoriaMetrics HTTP ${res.status}`);
-    const json = (await res.json()) as { data?: { result: { metric: Record<string, string>; value: [number, string] }[] } };
+    const json = (await vmPost(vm, "/api/v1/query", { query }, timeoutMs)) as unknown as {
+      data?: { result: { metric: Record<string, string>; value: [number, string] }[] };
+    };
     const out = new Map<string, number>();
     for (const r of json.data?.result ?? []) out.set(r.metric[L], Number(r.value[1]) || 0);
     return out;

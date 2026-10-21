@@ -97,7 +97,7 @@ export function WorkersPage() {
   const demand = useQuery({
     queryKey: ["controller-demand"],
     queryFn: endpoints.controllerDemand,
-    enabled: app?.historySource === "victoriametrics",
+    enabled: !!app?.instances.length,
     refetchInterval: 60_000,
   });
   const toggleGroup = (id: string) =>

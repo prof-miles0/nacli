@@ -188,10 +188,10 @@ export function loadConfig(path: string): AppConfig {
       ).toString("base64")}`;
     }
     const apiSecret = str(r.api_secret) || undefined;
-    // Its `instance` label in VictoriaMetrics. Required: guessing it from the
-    // url breaks as soon as the url is an IP or goes through another proxy.
+    // Its `instance` label in VictoriaMetrics, used only with [victoriametrics].
+    // Never guessed from the url (an IP or another proxy would break it):
+    // without it, its charts come from the history kept in memory.
     const vmInstance = str(r.vm_instance).trim();
-    if (!vmInstance) throw new Error(`[stack.rotom] of "${name}": missing vm_instance (its instance label in VictoriaMetrics)`);
     return { id, name, url, apiSecret, headers, vmInstance };
   });
 
@@ -240,7 +240,8 @@ function parseDragonite(
       return {
         id,
         name,
-        vmInstance: str(d.vm_instance).trim() || id,
+        // Without it (or without [victoriametrics]) its charts come from memory.
+        vmInstance: str(d.vm_instance).trim(),
         // It feeds the Rotom of its own stack.
         rotom: rotom ? rotoms.find((r) => r.name === name)?.id : undefined,
         api: url ? { url, headers } : undefined,

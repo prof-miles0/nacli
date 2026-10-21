@@ -24,11 +24,11 @@ const ago = (s?: number) => (s != null ? ` (last seen ${fmt.ago(Date.now() - s *
  */
 function useAlerts(): Alert[] {
   const { data: app } = useAppInfo();
-  const vm = app?.historySource === "victoriametrics";
+  // Rejected controllers: from VictoriaMetrics or from the metrics kept in memory.
   const demand = useQuery({
     queryKey: ["controller-demand"],
     queryFn: endpoints.controllerDemand,
-    enabled: vm,
+    enabled: !!app?.instances.length,
     refetchInterval: 60_000,
   });
   const dragonite = useQuery({

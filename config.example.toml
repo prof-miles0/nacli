@@ -14,12 +14,16 @@ session_ttl = "24h"
 # Mark the cookie as Secure (enable it if you serve the dashboard over HTTPS; it
 # is also enabled automatically if the proxy sends X-Forwarded-Proto: https).
 secure_cookies = false
-# How often each RotomNG instance is polled.
+# RotomNG and Dragonite are read on demand, when a page needs them. This is how
+# often the metrics of RotomNG, Dragonite and Golbat are read for the history
+# kept in memory (only for those VictoriaMetrics does not cover). A shorter
+# interval gives finer charts and uses more memory.
 poll_interval = "10s"
 # Maximum wait time per request to an instance.
 request_timeout = "8s"
-# How much history is kept in memory for the charts (only without
-# [victoriametrics]).
+# How much chart history is kept in memory. Charts use it for every instance
+# that VictoriaMetrics does not cover: without [victoriametrics], without a
+# vm_instance, or with a vm_instance that has no data there.
 history_retention = "24h"
 
 # Basemap for every map in Nacli: the Dashboard (devices, area geofences and
@@ -53,19 +57,24 @@ password = "change-this-password"
 # [stack.rotom]
 #   url          Root of the RotomNG http_listener, WITHOUT the /api suffix.
 #   api_secret   That instance's http_listener.secret (omit it if it has none).
-#   vm_instance  Its `instance` label in VictoriaMetrics.
+#   vm_instance  (optional) Its `instance` label in VictoriaMetrics; only used with
+#                [victoriametrics]. Without it, or if it has no data there, its
+#                charts come from memory (history_retention).
 #   headers      (optional) Extra headers, e.g. for a proxy in front.
 #   basic_auth   (optional) { username = "...", password = "..." } if the proxy requires Basic Auth.
 #
 # [stack.dragonite]  (optional)
-#   vm_instance  Its `instance` label in VictoriaMetrics (charts and Dashboard).
 #   url          (optional) Its API: Dragonite's own ("http://host:7272") or its
 #                admin + "/api". Enables Accounts, Areas, Unbound Modes, Proxies,
 #                Scheduler and Status, and their actions (create, edit, enable...).
 #                Passwords, emails and tokens never leave the server.
-#                Without [victoriametrics], the charts come from its /metrics, which
-#                the dashboard reads every 30 s and keeps history_retention in memory;
-#                for that, url must be Dragonite's own (the admin does not expose it).
+#                Nacli also reads its /metrics every poll_interval and keeps history_retention
+#                in memory; for that, url must be Dragonite's own (the admin does not
+#                expose /metrics).
+#   vm_instance  (optional) Its `instance` label in VictoriaMetrics; only used with
+#                [victoriametrics]. Without it, or if it has no data there, its
+#                charts come from memory. A chart of several Dragonites comes from
+#                memory as soon as one of them does.
 #   api_secret   (optional) Sent as the X-Dragonite-Admin-Secret header.
 #   headers / basic_auth  (optional) Same as in [stack.rotom].
 
@@ -92,18 +101,22 @@ vm_instance = "rotom-ng-lunala"
 
 # (Optional) Golbat. Each part enables something different:
 #   url / api_secret  Its API and its api_secret: the devices on the Dashboard
-#                     map (with their trails) and Golbat's state on Status.
-#   vm_instance       Its `instance` label in VictoriaMetrics: the Golbat
-#                     Metrics page, drawn from the stored data (requires
-#                     [victoriametrics]).
+#                     map (with their trails), Golbat's state on Status, and
+#                     the Golbat Metrics page from history_retention in memory
+#                     (Nacli reads its /metrics every poll_interval).
+#   vm_instance       (optional) Its `instance` label in VictoriaMetrics; only
+#                     used with [victoriametrics]: the Metrics page then draws
+#                     the stored data (up to 30 days). Without it, or if it has
+#                     no data there, the page comes from memory.
 # [golbat]
 # url = "http://10.0.0.20:9001"
 # api_secret = "..."
 # vm_instance = "golbat"
 
 # (Optional) VictoriaMetrics or Prometheus already scraping the instances'
-# /api/metrics. If configured, the charts come from here (up to 30 days) and
-# the dashboard keeps no history of its own.
+# metrics. Charts come from here (up to 30 days) for every instance whose
+# vm_instance has data; the rest keep using the history in memory. Nacli checks
+# which ones have data at startup, on every config change and every 5 minutes.
 # [victoriametrics]
 # url = "https://vm.example.com"
 # username = "vmuser"            # Basic Auth, if required

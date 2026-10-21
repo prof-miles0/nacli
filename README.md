@@ -57,7 +57,7 @@ only ever talks to Nacli.
 | **Unbound Modes** | Level, Invasion and Scout modes together: **create, edit, delete and copy** them. Scout jobs on a map, the scout queue (and clearing it), Invasion status charts, Level progress per account, and the areas that answer scout requests. |
 | **Proxies** | Every stack's proxies in one list, counted once however many stacks share them. **Create** a proxy in one or all stacks, **import** a list, **copy** proxies (keeping their names) to other stacks, enable, disable or delete them. |
 | **Scheduler** | Manage **schedules** and **groups**, read the **run ledger**, see what is active now and any diagnostics, **run** a schedule now, run the quest migration, and **copy a schedule** to another stack. |
-| **Metrics** | Dragonite's charts, from VictoriaMetrics or from its own `/metrics`. |
+| **Metrics** | Dragonite's charts, from VictoriaMetrics or from the last 24 h kept in memory. |
 
 ### 📱 Rotom
 
@@ -67,7 +67,7 @@ only ever talks to Nacli.
 
 ### 🦇 Golbat
 
-- Golbat's Grafana charts, straight from VictoriaMetrics.
+- Golbat's Grafana charts, from VictoriaMetrics or from the last 24 h kept in memory.
 
 ### And also
 
@@ -152,9 +152,9 @@ vm_instance = "dragonite"
 | `session_secret` | random | Signs session cookies. If empty, one is generated at startup and sessions are lost on restart. |
 | `session_ttl` | `"24h"` | How long a sign-in lasts. |
 | `secure_cookies` | `false` | Mark the cookie `Secure`; also on automatically behind a proxy sending `X-Forwarded-Proto: https`. |
-| `poll_interval` | `"10s"` | How often each RotomNG is polled. |
+| `poll_interval` | `"10s"` | How often the metrics of RotomNG, Dragonite and Golbat are read for the history in memory (only for those VictoriaMetrics does not cover). |
 | `request_timeout` | `"8s"` | Longest wait for any instance. |
-| `history_retention` | `"24h"` | In-memory chart history, used only without `[victoriametrics]`. |
+| `history_retention` | `"24h"` | Chart history kept in memory, for every instance VictoriaMetrics does not cover. |
 
 #### `[[users]]`
 
@@ -166,14 +166,17 @@ One block per deployment, with a `name`. If it has a Dragonite, the name must ma
 its user agent (`Dragonite - <name>`): that is how Nacli checks its controllers reach the Rotom
 of the same stack.
 
-- **`[stack.rotom]`**: `url` (root of the `http_listener`, **without** `/api`), `api_secret`,
-  `vm_instance` (its `instance` label in VictoriaMetrics) and, optionally, `headers` and
+- **`[stack.rotom]`**: `url` (root of the `http_listener`, **without** `/api`), `api_secret`
+  and, optionally, `vm_instance`, `headers` and
   `basic_auth = { username = "...", password = "..." }` for a proxy in front.
 - **`[stack.dragonite]`** (optional): `url` of its API, either Dragonite's own
-  (`http://host:7272`) or its admin plus `/api`; `vm_instance`; and optionally `api_secret`
+  (`http://host:7272`) or its admin plus `/api`; and optionally `vm_instance`, `api_secret`
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
   controls act on that Dragonite.
+
+`vm_instance` is each instance's `instance` label in VictoriaMetrics, and it only counts
+with `[victoriametrics]` (see below).
 
 #### `[map]`
 
@@ -187,17 +190,23 @@ public URLs and a client key. The example uses CARTO's Voyager and Dark Matter s
 #### `[golbat]` (optional)
 
 - `url` and `api_secret`: Golbat's API. Enables the devices on the Dashboard map (with their
-  trails) and Golbat's state on Status.
-- `vm_instance`: its `instance` label in VictoriaMetrics. Enables the Golbat Metrics page,
-  drawn from the stored data (requires `[victoriametrics]`).
+  trails), Golbat's state on Status, and the Golbat Metrics page from memory.
+- `vm_instance` (optional): its `instance` label in VictoriaMetrics, for the Metrics page to
+  draw the stored data.
 
 #### `[victoriametrics]` (optional)
 
-Where the charts come from (up to 30 days): `url`, `username`/`password` or `bearer_token`,
+Where the charts come from, up to 30 days: `url`, `username`/`password` or `bearer_token`,
 `instance_label` (default `instance`) and an optional `selector` added to every query.
-Without it, Nacli keeps `history_retention` in memory: for RotomNG from what it already polls,
-and for each Dragonite by reading its `/metrics` every 30 s (this needs Dragonite's own `url`,
-not the admin's). Golbat's Metrics page requires VictoriaMetrics.
+
+For every instance VictoriaMetrics does not cover, Nacli keeps the last `history_retention`
+(24 h) in memory, by reading its metrics every `poll_interval`: RotomNG's `/api/metrics`, and
+Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from VictoriaMetrics only when its `vm_instance` has data
+there; **without `[victoriametrics]`, without a `vm_instance`, or with one that has no data,
+they come from memory**. Nacli checks which ones have data at startup, whenever
+`config.toml` changes and every 5 minutes; an instance whose data stops arriving starts its
+memory history from that moment. Rotom's charts can mix both; a Dragonite chart that adds
+several stacks together uses memory as soon as one of them does.
 
 </details>
 
@@ -235,9 +244,10 @@ flowchart LR
     N -. "release checks" .-> GH["GitHub"]
 ```
 
-- The **server** (`server/`, Node + [Hono](https://hono.dev)) polls each RotomNG every
-  `poll_interval`, talks to each Dragonite's API on demand, and asks VictoriaMetrics for the
-  charts (or keeps its own history in memory).
+- The **server** (`server/`, Node + [Hono](https://hono.dev)) talks to each RotomNG and
+  Dragonite API on demand, when a page needs it (RotomNG's answers are shared for 3 s), and
+  asks VictoriaMetrics for the charts. Only for the instances VictoriaMetrics does not cover
+  does it read their metrics regularly, to keep the last 24 h in memory.
 - The **web app** (`web/`, React + Vite + Tailwind) only ever talks to Nacli's `/api`.
 - `shared/` holds the types both sides use.
 

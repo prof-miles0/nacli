@@ -79,11 +79,12 @@ export function MetricsPage() {
   const rangeMs = Number(range);
   const { visible } = useInstances();
   const { data: app } = useAppInfo();
+  // From VictoriaMetrics for at least one instance: ranges beyond the memory's 24 h.
   const fromVm = app?.historySource === "victoriametrics";
   const demand = useQuery({
     queryKey: ["controller-demand"],
     queryFn: endpoints.controllerDemand,
-    enabled: fromVm,
+    enabled: !!app?.instances.length,
     refetchInterval: 60_000,
   });
   const color = useInstanceColor();
@@ -184,12 +185,11 @@ export function MetricsPage() {
           <TimeChart data={respData} series={statusSeries} format={fmt.rate} stacked />
         </ChartCard>
       </div>
-      {fromVm ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <DeviceWorkersSection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />
-          <DeviceMemorySection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />
-        </div>
-      ) : null}
+      {/* Per device: from VictoriaMetrics or from the metrics kept in memory. */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <DeviceWorkersSection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />
+        <DeviceMemorySection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />
+      </div>
     </div>
   );
 }

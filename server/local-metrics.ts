@@ -1,9 +1,12 @@
-// In-memory stand-in for VictoriaMetrics, for the Dragonite section when no
-// [victoriametrics] is configured: every SCRAPE_MS it reads each Dragonite's
-// /metrics, keeps `history_retention` of its dragonite_* series, and answers
-// the same PromQL the charts send (via promql.ts) in VictoriaMetrics' JSON.
+// In-memory stand-in for VictoriaMetrics: it reads the /metrics of every
+// RotomNG, Dragonite (with a url) and Golbat (with a url) whose charts come
+// from memory (no [victoriametrics], no vm_instance, or no data for it there),
+// keeps `history_retention` of their series, and answers the same PromQL the
+// charts send (via promql.ts) in VictoriaMetrics' JSON.
 
-import type { AppConfig, DragoniteConfig } from "./config.ts";
+import type { AppConfig } from "./config.ts";
+import { rotomHeaders } from "./rotom.ts";
+import { GOLBAT_SERIES } from "./golbat.ts";
 import { parsePrometheus } from "./metrics.ts";
 import {
   instantQuery,
@@ -16,7 +19,8 @@ import {
   selectorMatchers,
 } from "./promql.ts";
 
-const SCRAPE_MS = 30_000;
+/** How often the scraper looks for targets that are due. */
+const TICK_MS = 2_000;
 /** Old samples are dropped in batches, not on every scrape. */
 const TRIM_BATCH = 60;
 
@@ -99,24 +103,96 @@ class InstanceStore {
   }
 }
 
+/** The `instance` label Golbat's series get here (there is one Golbat). */
+export const LOCAL_GOLBAT = "golbat";
+/**
+ * The `instance` label a RotomNG's series get here; prefixed, because a
+ * stack's Rotom and Dragonite share their id.
+ */
+export const localRotom = (id: string) => `rotom-${id}`;
+
+/** Which instances read /metrics into memory: those VictoriaMetrics does not cover. */
+export interface MemoryTargets {
+  rotom: (id: string) => boolean;
+  dragonite: (id: string) => boolean;
+  golbat: boolean;
+}
+
+/** One /metrics to read: its series are kept under the `instance` label given. */
+interface Target {
+  key: string;
+  /** For log lines, e.g. "[dragonite] Exeggcute". */
+  who: string;
+  /** Its full /metrics url. */
+  url: string;
+  everyMs: number;
+  headers: Record<string, string>;
+  instance: string;
+  keep: (name: string) => boolean;
+}
+
+/** Golbat's histograms come as name_bucket / _sum / _count. */
+const golbatKeep = (n: string) => GOLBAT_SERIES.has(n) || GOLBAT_SERIES.has(n.replace(/_(bucket|sum|count|total)$/, ""));
+
 export class LocalMetrics implements SeriesSource {
   private stores = new Map<string, InstanceStore>();
-  private targets: DragoniteConfig[] = [];
+  private targets: Target[] = [];
+  private lastScrape = new Map<string, number>();
   private retentionMs = 24 * 3_600_000;
   private timeoutMs = 8000;
   private timer?: NodeJS.Timeout;
   private lastError = new Map<string, string>();
 
-  /** (Re)configures from config.toml: scrapes only without VictoriaMetrics. */
-  apply(cfg: AppConfig) {
+  /**
+   * (Re)configures from config.toml and from which instances need memory.
+   * Dragonites are kept under their id, RotomNGs under localRotom(id); an
+   * instance that moves to VictoriaMetrics drops what was kept for it.
+   */
+  apply(cfg: AppConfig, need: MemoryTargets) {
     this.retentionMs = cfg.historyRetentionMs;
     this.timeoutMs = cfg.requestTimeoutMs;
-    this.targets = cfg.victoriaMetrics ? [] : cfg.dragonite.filter((d) => d.api);
-    const keep = new Set(this.targets.map((d) => d.vmInstance));
+    this.targets = [
+      ...cfg.instances
+        .filter((i) => need.rotom(i.id))
+        .map((i) => ({
+          key: `rotom:${i.id}`,
+          who: `[rotom] ${i.name}`,
+          url: `${i.url}/api/metrics`,
+          headers: { ...rotomHeaders(i), Accept: "text/plain" },
+          everyMs: cfg.pollIntervalMs,
+          instance: localRotom(i.id),
+          // Its own series; not the Go runtime ones nor its HTTP server's.
+          keep: (n: string) => n.startsWith("rotom_ng_") && !/^rotom_ng_(go|process|gin)_/.test(n),
+        })),
+      ...cfg.dragonite
+        .filter((d) => d.api && need.dragonite(d.id))
+        .map((d) => ({
+          key: `dragonite:${d.id}`,
+          who: `[dragonite] ${d.name}`,
+          url: `${d.api!.url}/metrics`,
+          headers: d.api!.headers,
+          everyMs: cfg.pollIntervalMs,
+          instance: d.id,
+          keep: (n: string) => n.startsWith("dragonite_"),
+        })),
+    ];
+    if (cfg.golbat?.api && need.golbat) {
+      this.targets.push({
+        key: "golbat",
+        who: "[golbat]",
+        url: `${cfg.golbat.api.url}/metrics`,
+        headers: cfg.golbat.api.headers,
+        everyMs: cfg.pollIntervalMs,
+        instance: LOCAL_GOLBAT,
+        keep: golbatKeep,
+      });
+    }
+    const keep = new Set(this.targets.map((t) => t.instance));
     for (const inst of this.stores.keys()) if (!keep.has(inst)) this.stores.delete(inst);
+    for (const k of this.lastScrape.keys()) if (!this.targets.some((t) => t.key === k)) this.lastScrape.delete(k);
     if (this.targets.length && !this.timer) {
-      void this.scrapeAll();
-      this.timer = setInterval(() => void this.scrapeAll(), SCRAPE_MS);
+      void this.scrapeDue();
+      this.timer = setInterval(() => void this.scrapeDue(), TICK_MS);
     } else if (!this.targets.length && this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
@@ -127,35 +203,44 @@ export class LocalMetrics implements SeriesSource {
     return this.targets.length > 0;
   }
 
-  private async scrapeAll() {
-    await Promise.all(this.targets.map((d) => this.scrape(d)));
+  /** Whether this Dragonite (by id), RotomNG (localRotom) or Golbat (LOCAL_GOLBAT) is being kept. */
+  has(instance: string) {
+    return this.targets.some((t) => t.instance === instance);
   }
 
-  private async scrape(d: DragoniteConfig) {
+  /** Reads every target whose turn has come (each has its own interval). */
+  private async scrapeDue() {
+    const now = Date.now();
+    const due = this.targets.filter((t) => now - (this.lastScrape.get(t.key) ?? 0) >= t.everyMs - TICK_MS / 2);
+    for (const t of due) this.lastScrape.set(t.key, now);
+    await Promise.all(due.map((t) => this.scrape(t)));
+  }
+
+  private async scrape(d: Target) {
     try {
-      const res = await fetch(`${d.api!.url}/metrics`, {
-        headers: d.api!.headers,
+      const res = await fetch(d.url, {
+        headers: d.headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const now = Date.now();
       const samples = parsePrometheus(await res.text())
-        .filter((s) => s.name.startsWith("dragonite_") && Number.isFinite(s.value))
+        .filter((s) => d.keep(s.name) && Number.isFinite(s.value))
         // The same labels VictoriaMetrics would leave, so the queries need no
         // change: its own instance/job, and the target's renamed exported_*.
         .map((s) => {
           const { job, instance, ...rest } = s.labels;
-          const labels: Labels = { ...rest, __name__: s.name, instance: d.vmInstance, job: "nacli" };
+          const labels: Labels = { ...rest, __name__: s.name, instance: d.instance, job: "nacli" };
           if (job !== undefined) labels.exported_job = job;
           if (instance !== undefined) labels.exported_instance = instance;
           return { labels, v: s.value };
         });
-      this.ingest(d.vmInstance, now, samples);
-      if (this.lastError.delete(d.id)) console.log(`[dragonite] ${d.name}: /metrics is responding again`);
+      this.ingest(d.instance, now, samples);
+      if (this.lastError.delete(d.key)) console.log(`${d.who}: /metrics is responding again`);
     } catch (e) {
       const msg = (e as Error).message;
-      if (this.lastError.get(d.id) !== msg) console.error(`[dragonite] ${d.name}: could not read /metrics (${msg})`);
-      this.lastError.set(d.id, msg);
+      if (this.lastError.get(d.key) !== msg) console.error(`${d.who}: could not read /metrics (${msg})`);
+      this.lastError.set(d.key, msg);
     }
   }
 

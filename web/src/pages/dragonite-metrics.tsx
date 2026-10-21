@@ -72,11 +72,7 @@ function StackFigures({ rows }: { rows: DragoniteSummary["instances"] }) {
 export function DragoniteMetricsPage() {
   const { data: app } = useAppInfo();
   const dragonites = app?.dragonite ?? [];
-  // Without VictoriaMetrics the server only keeps history_retention (24h by default).
-  const maxRange = app?.dragoniteHistory?.maxRangeMs ?? Infinity;
-  const ranges = RANGES.filter((r) => Number(r.value) <= maxRange);
   const [chosenRange, setRange] = useState(RANGES[2].value);
-  const range = ranges.some((r) => r.value === chosenRange) ? chosenRange : (ranges.at(-1)?.value ?? chosenRange);
   // "" = every Dragonite added together (the "All" tab); remembered per browser.
   const [instance, setInstanceRaw] = useState<string>(() => {
     try {
@@ -94,8 +90,14 @@ export function DragoniteMetricsPage() {
     }
   };
   const [areas, setAreas] = useState<string[]>([]);
-  const rangeMs = Number(range);
   const instances = instance && dragonites.some((d) => d.id === instance) ? [instance] : [];
+  // How far back the charts shown go: 30 days from VictoriaMetrics, only
+  // history_retention (24h by default) when they come from memory.
+  const one = dragonites.find((d) => d.id === instances[0]);
+  const maxRange = (one ? one.historyMs : app?.dragoniteHistory?.maxRangeMs) || Infinity;
+  const ranges = RANGES.filter((r) => Number(r.value) <= maxRange);
+  const range = ranges.some((r) => r.value === chosenRange) ? chosenRange : (ranges.at(-1)?.value ?? chosenRange);
+  const rangeMs = Number(range);
   const meta = useQuery({ queryKey: ["dragonite-meta"], queryFn: endpoints.dragoniteMeta, staleTime: 300_000 });
   const panels = meta.data?.panels ?? [];
   const results = useQueries({

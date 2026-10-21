@@ -967,8 +967,8 @@ function TypeHeading({ type, children }: { type: UnboundModeType; children?: Rea
  * counts invasions per instance, not per mode, so it covers all of the stack.
  */
 function InvasionSection({ stack }: { stack: DragoniteInfo }) {
-  const { data: app } = useAppInfo();
-  const maxRange = app?.dragoniteHistory?.maxRangeMs ?? Infinity;
+  // This stack's charts: 30 days from VictoriaMetrics, history_retention from memory.
+  const maxRange = stack.historyMs || Infinity;
   const ranges = RANGES.filter((r) => Number(r.value) <= maxRange);
   const [chosen, setRange] = useState(RANGES[2].value);
   const range = ranges.some((r) => r.value === chosen) ? chosen : (ranges.at(-1)?.value ?? chosen);
