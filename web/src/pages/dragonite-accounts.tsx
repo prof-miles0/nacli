@@ -182,6 +182,9 @@ function InstanceCard({ d, color }: { d: DragoniteInfo; color: string }) {
 /** Accounts by level, every stack together; the narrow bar splits each band by stack. */
 function LevelCard() {
   const [open, setOpen] = useState<string[]>([]);
+  // One stack: the split-by-stack bar would only repeat the total.
+  const multi = useStackColors().stacks.length > 1;
+  const cols = multi ? "grid-cols-[1.25rem_4.5rem_1fr_3.5rem_3.5rem]" : "grid-cols-[1.25rem_4.5rem_1fr_3.5rem]";
   const levels = useQuery({
     queryKey: ["account-levels-all"],
     queryFn: endpoints.allAccountLevels,
@@ -190,7 +193,7 @@ function LevelCard() {
   return (
     <Card className="gap-3 p-5">
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold">By level · all stacks</div>
+        <div className="text-sm font-semibold">{multi ? "By level · all stacks" : "By level"}</div>
         <StackLegend />
       </div>
       {levels.error ? (
@@ -210,7 +213,7 @@ function LevelCard() {
                   type="button"
                   disabled={!canOpen}
                   onClick={() => setOpen((o) => (isOpen ? o.filter((x) => x !== b.label) : [...o, b.label]))}
-                  className="grid w-full grid-cols-[1.25rem_4.5rem_1fr_3.5rem_3.5rem] items-center gap-3 py-2.5 text-left text-sm enabled:hover:bg-accent/30"
+                  className={cn("grid w-full items-center gap-3 py-2.5 text-left text-sm enabled:hover:bg-accent/30", cols)}
                 >
                   {canOpen ? (
                     <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", !isOpen && "-rotate-90")} />
@@ -219,19 +222,19 @@ function LevelCard() {
                   )}
                   <span className="font-medium">{b.label}</span>
                   <MiniBar counts={total} />
-                  <StackSplit byStack={splitOf(rows)} />
+                  {multi ? <StackSplit byStack={splitOf(rows)} /> : null}
                   <span className="text-right font-semibold tabular-nums">{fmt.int(total.total)}</span>
                 </button>
                 {isOpen
                   ? rows.map((r) => (
                       <div
                         key={r.level}
-                        className="grid grid-cols-[1.25rem_4.5rem_1fr_3.5rem_3.5rem] items-center gap-3 py-1.5 text-xs text-muted-foreground"
+                        className={cn("grid items-center gap-3 py-1.5 text-xs text-muted-foreground", cols)}
                       >
                         <span />
                         <span className="pl-3">Level {r.level}</span>
                         <MiniBar counts={r} />
-                        <StackSplit byStack={r.byStack} />
+                        {multi ? <StackSplit byStack={r.byStack} /> : null}
                         <span className="text-right tabular-nums">{fmt.int(r.total)}</span>
                       </div>
                     ))
@@ -272,7 +275,9 @@ const ts = (s: number | null) => (s && s > 1 ? s * 1000 : undefined);
  * those a worker is using now or the rest.
  */
 function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
-  const { colorOf, nameOf } = useStackColors();
+  const { stacks, colorOf, nameOf } = useStackColors();
+  // One stack: every row would carry the same dot.
+  const multi = stacks.length > 1;
   const [page, setPage] = useState(0);
   // In use: most recently picked first; the rest: most recently returned first.
   const [sortBy, setSortBy] = useState<string>(inUse ? "last_selected" : "last_released");
@@ -344,7 +349,7 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
             <thead>
               <tr>
                 {/* The stack column: colour dots only, no heading. */}
-                <th className="w-8" aria-label="Stack" />
+                {multi ? <th className="w-8" aria-label="Stack" /> : null}
                 {sortHeader("username", SORTS[0].label)}
                 {sortHeader("level", SORTS[1].label)}
                 {sortHeader("provider", SORTS[2].label)}
@@ -357,7 +362,7 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
             <tbody className={cn(list.isPlaceholderData && "opacity-60")}>
               {data.rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={multi ? 8 : 7} className="py-8 text-center text-muted-foreground">
                     No matching accounts.
                   </td>
                 </tr>
@@ -366,16 +371,18 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
                 const st = accountStatus(a);
                 return (
                   <tr key={`${a.stack}:${a.username}`}>
-                    <td className="w-8">
-                      {/* Just the stack's colour; its name on hover. */}
-                      <HoverCard content={<span>{nameOf(a.stack ?? "")}</span>}>
-                        <span
-                          className="block size-2.5 rounded-full"
-                          style={{ background: colorOf(a.stack ?? "") }}
-                          aria-label={nameOf(a.stack ?? "")}
-                        />
-                      </HoverCard>
-                    </td>
+                    {multi ? (
+                      <td className="w-8">
+                        {/* Just the stack's colour; its name on hover. */}
+                        <HoverCard content={<span>{nameOf(a.stack ?? "")}</span>}>
+                          <span
+                            className="block size-2.5 rounded-full"
+                            style={{ background: colorOf(a.stack ?? "") }}
+                            aria-label={nameOf(a.stack ?? "")}
+                          />
+                        </HoverCard>
+                      </td>
+                    ) : null}
                     <td className="font-mono text-xs">{a.username}</td>
                     <td className="tabular-nums">{a.level}</td>
                     <td className="uppercase">{a.provider}</td>
@@ -521,7 +528,7 @@ export function DragoniteAccountsPage() {
       {adding === "create" ? <CreateAccountModal stacks={withApi} onClose={() => setAdding(undefined)} /> : null}
       {adding === "import" ? <ImportAccountsModal stacks={withApi} onClose={() => setAdding(undefined)} /> : null}
       {withApi.length > 1 ? <DuplicatesCard stacks={withApi} /> : null}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className={cn("grid gap-4", dragonites.length > 1 && "lg:grid-cols-2")}>
         {dragonites.map((d) => (
           <InstanceCard key={d.id} d={d} color={d.rotom ? color(d.rotom) : "var(--muted-foreground)"} />
         ))}

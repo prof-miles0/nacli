@@ -503,8 +503,9 @@ function StackAreas({
         style={{ background: tabs ? `linear-gradient(180deg, ${tabTint(stackColor)}, var(--card) 85%)` : `linear-gradient(90deg, color-mix(in oklab, ${stackColor} 14%, var(--card)), var(--card) 55%)` }}
       >
         {tabs ? null : <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: stackColor }} />}
-        {/* With tabs, the open tab already names the stack: keep the name only for screen readers. */}
-        <div className={cn("flex min-w-36 flex-col gap-0.5 pl-1", tabs && "sr-only")}>
+        {/* With tabs the open tab already names the stack, and with a single stack
+            there is nothing to tell apart: keep the name only for screen readers. */}
+        <div className={cn("flex min-w-36 flex-col gap-0.5 pl-1", (tabs || stacks.length < 2) && "sr-only")}>
           <Label>Stack</Label>
           <h2 className="text-lg leading-tight font-bold">{stack.name}</h2>
         </div>
@@ -513,7 +514,7 @@ function StackAreas({
             className={cn(
               "grid flex-1 grid-cols-2 gap-2",
               // Without the title the figures share the whole width.
-              tabs ? "sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]" : "sm:flex sm:flex-wrap sm:items-stretch sm:justify-end",
+              tabs || stacks.length < 2 ? "sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]" : "sm:flex sm:flex-wrap sm:items-stretch sm:justify-end",
             )}
           >
             <HeadStat label="Enabled areas" value={`${on.length}/${all.length}`}>

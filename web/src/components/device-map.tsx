@@ -812,10 +812,12 @@ export function DeviceMap({
     return () => document.removeEventListener("keydown", esc);
   }, [selKey, selArea]);
 
-  // Devices per Rotom instance, for the legend.
-  const perInstance = instances
-    .map((i) => ({ i, n: live.filter((d) => d.rotom?.instanceId === i.id).length }))
-    .filter((x) => x.n > 0);
+  // Devices per Rotom instance, for the legend; with a single instance it
+  // would only repeat the total.
+  const perInstance =
+    instances.length > 1
+      ? instances.map((i) => ({ i, n: live.filter((d) => d.rotom?.instanceId === i.id).length })).filter((x) => x.n > 0)
+      : [];
   const unknown = live.filter((d) => !d.rotom).length;
 
   return (

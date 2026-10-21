@@ -117,8 +117,8 @@ function WorkersChart({ instances, color }: { instances: InstanceInfo[]; color: 
       ) : (
         <TimeChart data={data} series={series} format={fmt.int} height={220} stacked integer />
       )}
-      {/* Legend with each instance's workers in use right now. */}
-      <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs">
+      {/* Legend with each instance's workers in use right now (one instance: the headline says it). */}
+      <div className={cn("flex flex-wrap gap-x-5 gap-y-1.5 text-xs", instances.length < 2 && "hidden")}>
         {instances.map((i) => (
           <span key={i.id} className="inline-flex items-center gap-1.5">
             <span className="h-2 w-3 rounded-sm" style={{ background: color(i.id) }} />
@@ -393,7 +393,7 @@ function AccountsOverview({ color }: { color: (id: string) => string }) {
     <Card className="cursor-pointer gap-4 p-5" onClick={() => navigate("/dragonite/accounts")}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <Label>Accounts · all instances</Label>
+          <Label>{dragonites.length > 1 ? "Accounts · all instances" : "Accounts"}</Label>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl leading-none font-bold tabular-nums">{fmt.int(total.total)}</span>
             <span className="text-sm text-muted-foreground">
@@ -409,7 +409,11 @@ function AccountsOverview({ color }: { color: (id: string) => string }) {
       ) : (
         <Spinner />
       )}
-      <div className="flex flex-col gap-2">
+      {/* Per stack, when there are several; a single one is the total above (only its error is news). */}
+      {dragonites.length === 1 && loaded[0].q.error ? (
+        <span className="truncate text-xs text-red-300">{(loaded[0].q.error as Error).message}</span>
+      ) : null}
+      <div className={cn("flex flex-col gap-2", dragonites.length < 2 && "hidden")}>
         {loaded.map(({ d, q }) => (
           <div key={d.id} className="grid grid-cols-[minmax(6rem,auto)_1fr_auto] items-center gap-3 text-sm">
             <span className="flex items-center gap-2 font-medium">

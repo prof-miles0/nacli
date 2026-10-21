@@ -82,6 +82,8 @@ export function DragoniteProxiesPage() {
   const refresh = () => qc.invalidateQueries({ queryKey: ["dragonite-proxies"] });
 
   const current = stacks.some((d) => d.id === tab) ? tab : "";
+  // One stack: nothing to copy to, and every row would name the same stack.
+  const multi = stacks.length > 1;
   const stackColor = (id: string) => {
     const d = stacks.find((x) => x.id === id);
     return d?.rotom ? color(d.rotom) : "var(--muted-foreground)";
@@ -202,7 +204,7 @@ export function DragoniteProxiesPage() {
         },
       });
     }
-    if (p.endpoint) {
+    if (p.endpoint && multi) {
       items.push({
         key: "copy",
         label: missing.length ? `Copy to ${missing.map((d) => d.name).join(", ")}` : "Copy to other stacks",
@@ -292,7 +294,7 @@ export function DragoniteProxiesPage() {
         <Table>
           <thead>
             <tr>
-              <th className="w-8">
+              <th className={cn("w-8", !multi && "hidden")}>
                 <input
                   type="checkbox"
                   aria-label="Select all shown"
@@ -315,7 +317,7 @@ export function DragoniteProxiesPage() {
               </th>
               {header("proxy", "Proxy")}
               {header("name", "Name")}
-              {header("instances", "Instances")}
+              {header("instances", multi ? "Instances" : "Status")}
               {header("lastOk", "Last OK login")}
               <th className="w-10" />
             </tr>
@@ -323,7 +325,7 @@ export function DragoniteProxiesPage() {
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-muted-foreground">
+                <td colSpan={multi ? 6 : 5} className="py-8 text-center text-muted-foreground">
                   No proxies match.
                 </td>
               </tr>
@@ -331,7 +333,7 @@ export function DragoniteProxiesPage() {
             {sorted.map(({ p, here, names, lastOk: last }) => {
               return (
                 <tr key={p.key} className={cn(selected.has(p.key) && "bg-accent/40")}>
-                  <td>
+                  <td className={cn(!multi && "hidden")}>
                     {p.endpoint ? (
                       <input
                         type="checkbox"
@@ -385,9 +387,18 @@ export function DragoniteProxiesPage() {
                                 current && i.stack !== current && "opacity-50",
                               )}
                             >
-                              <span className="size-2 rounded-full" style={{ background: stackColor(i.stack) }} />
-                              {stackName(i.stack)}
-                              <span className={cn("size-1.5 rounded-full", STATE[st].cls)} />
+                              {multi ? (
+                                <>
+                                  <span className="size-2 rounded-full" style={{ background: stackColor(i.stack) }} />
+                                  {stackName(i.stack)}
+                                  <span className={cn("size-1.5 rounded-full", STATE[st].cls)} />
+                                </>
+                              ) : (
+                                <>
+                                  <span className={cn("size-2 rounded-full", STATE[st].cls)} />
+                                  {STATE[st].label}
+                                </>
+                              )}
                             </span>
                           </HoverCard>
                         );
