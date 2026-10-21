@@ -1,36 +1,94 @@
+<div align="center">
+
+<img src="web/public/nacli.png" alt="Nacli" width="128" height="128">
+
 # Nacli
 
-Web dashboard for [Dragonite](https://github.com/UnownHash/Dragonite-Public),
-[RotomNG](https://github.com/UnownHash/RotomNG) and Golbat stacks, styled after
-the Dragonite admin. One page for every stack: its state, its devices on a map,
-its areas, accounts, proxies, modes and scheduler, with its own login and
-historical charts.
+**One dashboard for your Dragonite, RotomNG and Golbat stacks.**
 
-## Getting started
+See every stack at a glance, follow your devices on a map, and manage areas, accounts,
+proxies, modes and schedules without jumping between admins.
 
-```bash
-cp config.example.toml config.toml   # edit users and instances
-npm install
-npm run build
-npm start                            # http://localhost:7080
-```
+[![Docker image](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml/badge.svg)](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml)
+[![ghcr.io](https://img.shields.io/badge/ghcr.io-prof--miles0%2Fnacli-2496ED?logo=docker&logoColor=white)](https://github.com/prof-miles0/nacli/pkgs/container/nacli)
+![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-lightgrey)
+![Node](https://img.shields.io/badge/node-%E2%89%A520.19-339933?logo=node.js&logoColor=white)
 
-Development with hot reload (frontend on :5173, API on :7080):
+</div>
 
-```bash
-npm run dev
-```
+---
 
-## Docker
+Nacli sits in front of one or more **stacks** (a [RotomNG](https://github.com/UnownHash/RotomNG),
+the [Dragonite](https://github.com/UnownHash/Dragonite-Public) that feeds it and, optionally, Golbat)
+and brings them together in a single web app with its own login. It looks and feels like the
+Dragonite admin, works the same on a phone, and keeps every secret on the server: the browser
+only ever talks to Nacli.
 
-Every push to `main` publishes an image to GitHub Container Registry
-(`linux/amd64` and `linux/arm64`), built by `.github/workflows/docker.yml`:
+## ✨ Features
+
+### 🗺️ Dashboard
+
+- **Live map** of every device, from Golbat's last known location, coloured by stack and
+  matched to its Rotom device, Dragonite area, mode and controller.
+- **Geofences** of every enabled area, drawn in its stack's colour. Hover to see its name;
+  **click one to show the trails of all the controllers working it**.
+- **Controller trails** for the last 30 minutes, followed per controller (they survive a move
+  to another worker). Jumps of more than 50 km are dropped as bad readings, except for
+  Invasion and Scout controllers, which really do travel far.
+- Accounts, Dragonite and Rotom overviews, with charts of workers and throughput.
+
+### 🩺 Status
+
+- Per Dragonite: whether **Kōji** and **Golbat** are connected, its **global rate limit** and
+  why it last dropped, and whether **Dragonite** and **RotomNG** are **up to date** with their
+  latest GitHub releases (all green when they are).
+- The Dragonite admin's controls, per instance: **pause or reset the global rate limit**,
+  **reload proxies**, **reload accounts** and **reload Dragonite**.
+- An **alerts bar on every page** for anything that needs attention: an instance offline, a
+  degraded rate limit, controllers reaching the wrong Rotom, Rotom rejecting controllers,
+  Golbat not reporting, or an account present in more than one stack.
+
+### 🐉 Dragonite
+
+| Page | What you can do |
+|---|---|
+| **Accounts** | Totals and states per stack, accounts by level, and searchable *In use* / *Available* lists across every stack. **Create** an account or **import** a CSV, as the admin does, choosing the one stack it belongs to. Warns when an account is in more than one stack. |
+| **Areas** | Every area with its live workers. **Create** an area (same fields as the admin) in one or several stacks, with at most one of them enabled; **enable/disable**, **edit** workers and per-mode options, and **copy or move** areas between stacks. |
+| **Unbound Modes** | Level, Invasion and Scout modes together: **create, edit, delete and copy** them. Scout jobs on a map, the scout queue (and clearing it), Invasion status charts, Level progress per account, and the areas that answer scout requests. |
+| **Proxies** | Every stack's proxies in one list, counted once however many stacks share them. **Create** a proxy in one or all stacks, **import** a list, **copy** proxies (keeping their names) to other stacks, enable, disable or delete them. |
+| **Scheduler** | Manage **schedules** and **groups**, read the **run ledger**, see what is active now and any diagnostics, **run** a schedule now, run the quest migration, and **copy a schedule** to another stack. |
+| **Metrics** | Dragonite's charts, from VictoriaMetrics or from its own `/metrics`. |
+
+### 📱 Rotom
+
+- **Instances**, **Devices**, **Workers**, **Jobs** and **Metrics** for every RotomNG at once.
+- Device actions: restart the app, reboot, enable, disable, disconnect and **view its logcat**
+  in place. Controller actions: request a reconnect or disconnect it. Run and clear jobs.
+
+### 🦇 Golbat
+
+- Golbat's Grafana charts, straight from VictoriaMetrics.
+
+### And also
+
+- Light and dark themes, a layout that works on phones, and sections that only appear for
+  what your `config.toml` actually configures.
+
+## 🚀 Quick start
+
+Nacli is published as a Docker image for `linux/amd64` and `linux/arm64`.
+
+1. Create a `config.toml` from [`config.example.toml`](config.example.toml) (see
+   *Configuration* below).
+2. Run it:
 
 ```bash
 docker run -d --name nacli -p 7080:7080 \
   -v $PWD/config.toml:/app/config/config.toml:ro \
   ghcr.io/prof-miles0/nacli:latest
 ```
+
+3. Open <http://localhost:7080> and sign in with a user from `config.toml`.
 
 Or with Docker Compose:
 
@@ -45,76 +103,164 @@ services:
       - ./config.toml:/app/config/config.toml:ro
 ```
 
-Tags: `latest` and `main` (the main branch), `sha-<commit>`, and `1.2.3` / `1.2` for a `v1.2.3` git tag.
-Keep `listen = "0.0.0.0:7080"` in `config.toml` (the default) so the container is
-reachable, and set a fixed `session_secret` so sessions survive restarts.
+| Tag | Points to |
+|---|---|
+| `latest`, `main` | The latest build of the `main` branch |
+| `sha-<commit>` | That exact commit |
+| `1.2.3`, `1.2` | A `v1.2.3` release tag |
 
-To build it yourself: `docker build -t nacli .`
+> [!TIP]
+> Set a fixed `session_secret` so people stay signed in when the container restarts, and
+> keep `listen = "0.0.0.0:7080"` (the default) so the container is reachable. Changes to
+> `config.toml` are picked up on save, with no restart.
 
-## config.toml
+## ⚙️ Configuration
 
-- `[server]`: port, title, session duration and polling interval.
-- `[victoriametrics]` (optional): source for the charts, up to 30 days.
-  Without this section, the dashboard keeps `history_retention` (24 h) in memory:
-  for RotomNG, from what it already polls; for each Dragonite with a `url`, by
-  reading its `/metrics` every 30 s (about 8 MB per instance). Dragonite charts
-  use the same PromQL queries in both cases (`server/promql.ts` evaluates them
-  in memory). Golbat requires VictoriaMetrics.
-- `[golbat]` (optional, requires `[victoriametrics]`): enables the Golbat section
-  (Metrics and a block on the Dashboard). `selector` filters its series, e.g.
-  `instance="golbat"`. The charts come from its Grafana dashboard and are
-  defined in `server/golbat.ts`.
-- `[golbat]` with `url` and `api_secret`: the Dashboard shows a map at the top with
-  the last location of each device (Golbat's `/api/devices/all`, with the
-  `X-Golbat-Secret` header), matched to its Rotom device and its Dragonite area
-  and worker. Does not require VictoriaMetrics.
-- `[map]`: background for that map (MapLibre GL). `style_url` for vector tiles
-  or `tiles_url` for raster; `carto_key` is appended as `api_key` to CARTO
-  URLs, and `tiles_attribution` is the attribution shown. The browser
-  downloads tiles directly from CARTO.
-- `[[users]]`: one block per user (`username` / `password`).
-- `[[stack]]`: one block per deployment, with its `name` and two subtables:
-  - `[stack.rotom]`: `url` (root of the `http_listener`, **without** `/api`),
-    `api_secret` (its `http_listener.secret`), `vm_instance` (its `instance` in
-    VictoriaMetrics, required) and, optionally, `headers` and `basic_auth`. `url = "demo://something"` generates sample data.
-  - `[stack.dragonite]` (optional, requires `[victoriametrics]`): `vm_instance`
-    (its `instance` in VictoriaMetrics) and the `url` of its API. Enables the
-    Dragonite section: Metrics (charts from `server/dragonite.ts`) and, with `url`, Areas
-    (`v2/areas` + `status`, with workers linked to their Rotom device)
-    and Accounts (`accounts/stats`, `accounts/level-stats`, `v2/accounts`, without
-    exposing passwords or tokens). The dashboard checks that the controllers of
-    that Dragonite reach the Rotom in the same stack: their user agent names it
-    ("Dragonite - <name>").
+Everything lives in one `config.toml`. A minimal one, for a single stack:
 
-Changes to `config.toml` are applied automatically on save (or with `kill -HUP`).
+```toml
+[server]
+session_secret = "a-long-random-string"
 
-## How it works
+[[users]]
+username = "admin"
+password = "change-this-password"
 
-- The backend (`server/`, Node + Hono) polls each instance every `poll_interval`
-  (`/api/status`, `/api/config` and, every 3 polls, `/api/metrics`) and stores the
-  latest state. Charts are requested from VictoriaMetrics (`query_range`)
-  when configured; otherwise an in-memory history is used.
-- The browser never talks to RotomNG directly: instance secrets stay on the
-  server. Actions (restart device, disconnect controller, jobs…) go through
-  `/api/rotom/<id>/…`, restricted to an allowlist of routes.
-- Session: `HttpOnly` cookie signed with `session_secret`; requests that
-  modify anything also require the `X-Nacli` header. Login is limited to 10
-  failed attempts per 5 minutes per IP.
+[[stack]]
+name = "Exeggcute"
 
-## Tabs
+[stack.rotom]
+url = "http://10.0.0.10:7072"      # RotomNG http_listener, without /api
+api_secret = "..."                 # its http_listener.secret
+vm_instance = "rotom-ng"
 
-- **Dashboard**: map with each device's last location (and the geofences of the
-  enabled areas, in each stack's colour; click one to see its controllers'
-  trails), accounts, Dragonite and Rotom overviews.
-- **Status**: per Dragonite, whether Kōji and Golbat are connected, its global
-  rate limit and why it dropped, and whether Dragonite and RotomNG are up to
-  date; plus its controls (pause/reset the rate limit, reload proxies, accounts
-  or Dragonite).
-- **Dragonite**: Accounts (create, import, and a warning for accounts in more
-  than one stack), Areas (create, edit, enable, copy or move between stacks),
-  Unbound Modes (Level, Invasion and Scout), Proxies (every stack together),
-  Scheduler (schedules, groups and run ledger) and Metrics.
-- **Rotom**: Instances, Devices, Workers, Jobs and Metrics.
-- **Golbat**: Metrics.
+[stack.dragonite]
+url = "http://10.0.0.10:7272"      # Dragonite's API (or its admin + "/api")
+vm_instance = "dragonite"
+```
 
-Sections only appear for what `config.toml` configures.
+<details>
+<summary><b>Every section and option</b></summary>
+
+#### `[server]`
+
+| Key | Default | |
+|---|---|---|
+| `title` | `"Nacli"` | Name shown in the app. |
+| `listen` | `"0.0.0.0:7080"` | Address and port to listen on. |
+| `session_secret` | random | Signs session cookies. If empty, one is generated at startup and sessions are lost on restart. |
+| `session_ttl` | `"24h"` | How long a sign-in lasts. |
+| `secure_cookies` | `false` | Mark the cookie `Secure`; also on automatically behind a proxy sending `X-Forwarded-Proto: https`. |
+| `poll_interval` | `"10s"` | How often each RotomNG is polled. |
+| `request_timeout` | `"8s"` | Longest wait for any instance. |
+| `history_retention` | `"24h"` | In-memory chart history, used only without `[victoriametrics]`. |
+
+#### `[[users]]`
+
+One block per person who can sign in: `username` and `password`.
+
+#### `[[stack]]`
+
+One block per deployment, with a `name`. If it has a Dragonite, the name must match the one in
+its user agent (`Dragonite - <name>`): that is how Nacli checks its controllers reach the Rotom
+of the same stack.
+
+- **`[stack.rotom]`**: `url` (root of the `http_listener`, **without** `/api`), `api_secret`,
+  `vm_instance` (its `instance` label in VictoriaMetrics) and, optionally, `headers` and
+  `basic_auth = { username = "...", password = "..." }` for a proxy in front.
+  `url = "demo://anything"` generates sample data.
+- **`[stack.dragonite]`** (optional): `url` of its API, either Dragonite's own
+  (`http://host:7272`) or its admin plus `/api`; `vm_instance`; and optionally `api_secret`
+  (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
+  Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
+  controls act on that Dragonite.
+
+#### `[victoriametrics]` (optional)
+
+Where the charts come from (up to 30 days): `url`, `username`/`password` or `bearer_token`,
+`instance_label` (default `instance`) and an optional `selector` added to every query.
+Without it, Nacli keeps `history_retention` in memory: for RotomNG from what it already polls,
+and for each Dragonite by reading its `/metrics` every 30 s (this needs Dragonite's own `url`,
+not the admin's). Golbat's charts require VictoriaMetrics.
+
+#### `[golbat]` (optional)
+
+`selector` picks Golbat's series in VictoriaMetrics (e.g. `instance="golbat"`). With `url` and
+`api_secret`, the Dashboard shows the device map (Golbat's `/api/devices/all`); the map does
+not need VictoriaMetrics.
+
+#### `[map]` (optional)
+
+The map's basemap (MapLibre GL): `style_url` (vector) and optionally `style_url_dark`, or
+`tiles_url` (raster); `carto_key` is appended as `api_key` to CARTO URLs, and
+`tiles_attribution` is shown on the map. The browser loads tiles directly, so use a client key.
+
+</details>
+
+See [`config.example.toml`](config.example.toml) for a commented example of everything.
+
+## 🛠️ Running from source
+
+Requires Node.js 20.19 or newer.
+
+```bash
+cp config.example.toml config.toml   # then edit it
+npm install
+npm run build
+npm start                            # http://localhost:7080
+```
+
+For development, with hot reload (frontend on `:5173`, API on `:7080`):
+
+```bash
+npm run dev
+```
+
+`npm run typecheck` checks the whole project. To build the image yourself:
+`docker build -t nacli .`
+
+## 🧩 How it works
+
+```mermaid
+flowchart LR
+    B["Browser"] -- "session cookie" --> N["Nacli<br/>(Node + Hono)"]
+    N -- "status, actions" --> R["RotomNG"]
+    N -- "API" --> D["Dragonite"]
+    N -- "device locations" --> G["Golbat"]
+    N -- "PromQL" --> V[("VictoriaMetrics")]
+    N -. "release checks" .-> GH["GitHub"]
+```
+
+- The **server** (`server/`, Node + [Hono](https://hono.dev)) polls each RotomNG every
+  `poll_interval`, talks to each Dragonite's API on demand, and asks VictoriaMetrics for the
+  charts (or keeps its own history in memory).
+- The **web app** (`web/`, React + Vite + Tailwind) only ever talks to Nacli's `/api`.
+- `shared/` holds the types both sides use.
+
+## 🔒 Security
+
+- **Secrets stay on the server.** Instance secrets, account passwords and tokens, and proxy
+  credentials never reach the browser.
+- **Everything under `/api` needs a session**, except signing in and out. The session is an
+  `HttpOnly`, `SameSite=Strict` cookie signed with `session_secret`.
+- **Requests that change anything** also need an `X-Nacli` header, so another site cannot
+  make them with your cookie.
+- **Sign-in is rate-limited**: 10 failed attempts per 5 minutes per IP.
+- **Rotom actions** go through an allowlist of operations; anything else is refused.
+- Every change made through Nacli is **logged** with the user who made it.
+
+## 📁 Project layout
+
+```
+server/        API server: config, auth, RotomNG, Dragonite, Golbat and VictoriaMetrics
+shared/        Types shared by the server and the web app
+web/           React app (pages, components, styles)
+Dockerfile     Two-stage image: build on Debian, run on Alpine as a non-root user
+.github/       Workflow that builds and publishes the image to ghcr.io
+```
+
+---
+
+<div align="center">
+<sub>Nacli is an independent project, not affiliated with UnownHash, Niantic or The Pokémon Company.</sub>
+</div>

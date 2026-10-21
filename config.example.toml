@@ -77,11 +77,12 @@ password = "change-this-password"
 #   basic_auth   (optional) { username = "...", password = "..." } if the proxy requires Basic Auth.
 #   A "demo://name" url generates sample data without connecting to anything.
 #
-# [stack.dragonite]  (optional; requires [victoriametrics])
+# [stack.dragonite]  (optional)
 #   vm_instance  Its `instance` label in VictoriaMetrics (charts and Dashboard).
-#   url          (optional) Its API, for the Areas and Accounts tabs: Dragonite's
-#                own ("http://host:7272") or its admin + "/api". The dashboard only
-#                reads; passwords, emails and tokens never leave the server.
+#   url          (optional) Its API: Dragonite's own ("http://host:7272") or its
+#                admin + "/api". Enables Accounts, Areas, Unbound Modes, Proxies,
+#                Scheduler and Status, and their actions (create, edit, enable...).
+#                Passwords, emails and tokens never leave the server.
 #                Without [victoriametrics], the charts come from its /metrics, which
 #                the dashboard reads every 30 s and keeps history_retention in memory;
 #                for that, url must be Dragonite's own (the admin does not expose it).
