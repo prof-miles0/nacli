@@ -8,3 +8,5 @@ data
 .github
 .DS_Store
 *.log
+config
+compose.yml

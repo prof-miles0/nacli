@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, watch } from "node:fs";
+import { basename, dirname } from "node:path";
 import { serve } from "@hono/node-server";
 import { unpackArchive } from "./archive.ts";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -122,7 +123,10 @@ function reload(reason: string) {
 
 process.on("SIGHUP", () => reload("SIGHUP"));
 let reloadTimer: NodeJS.Timeout | undefined;
-watch(cfg.path, () => {
+// The folder is watched, not the file: editors that save by writing a new
+// file and renaming it over the old one would leave a file watch behind.
+watch(dirname(cfg.path), (_, name) => {
+  if (name && name !== basename(cfg.path)) return;
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => reload("file changed"), 300);
 });
@@ -196,7 +200,7 @@ app.get("/api/app", (c) =>
     title: cfg.title,
     pollIntervalMs: cfg.pollIntervalMs,
     historySource: cfg.victoriaMetrics ? "victoriametrics" : "memory",
-    golbat: !!(cfg.victoriaMetrics && cfg.golbat),
+    golbat: !!golbatCtx(),
     golbatMap: !!cfg.golbat?.api,
     map: cfg.map,
     dragonite: dragoniteVm() ? cfg.dragonite.map(({ id, name, rotom, api }) => ({ id, name, rotom, accounts: !!api })) : [],
@@ -245,15 +249,16 @@ function rangeParam(raw: string | undefined, max: number) {
 
 // ---------- Golbat (VictoriaMetrics) ----------
 
+/** Golbat's stored metrics: need [victoriametrics] and its vm_instance there. */
 function golbatCtx() {
   const vm = cfg.victoriaMetrics;
   const golbat = cfg.golbat;
-  return vm && golbat ? { vm, golbat } : undefined;
+  return vm && golbat?.vmInstance ? { vm, golbat } : undefined;
 }
 
 app.get("/api/golbat/meta", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [golbat] and [victoriametrics] in config.toml" }, 404);
+  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
   const areas = await cachedVm("golbat:areas", 60_000 * 240 * 5, () => golbatAreas(ctx.vm, ctx.golbat, 20_000)).catch(
     () => [] as string[],
   );
@@ -266,7 +271,7 @@ app.get("/api/golbat/meta", async (c) => {
 
 app.get("/api/golbat/panel/:id", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [golbat] and [victoriametrics] in config.toml" }, 404);
+  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
   const panel = GOLBAT_PANELS.find((p) => p.id === c.req.param("id"));
   if (!panel) return c.json({ error: "unknown chart" }, 404);
   const inter = c.req.query("inter") ?? "10m";
@@ -288,7 +293,7 @@ app.get("/api/golbat/panel/:id", async (c) => {
 
 app.get("/api/golbat/summary", async (c) => {
   const ctx = golbatCtx();
-  if (!ctx) return c.json({ error: "requires [golbat] and [victoriametrics] in config.toml" }, 404);
+  if (!ctx) return c.json({ error: "requires [victoriametrics] and vm_instance in [golbat]" }, 404);
   try {
     return c.json(await cachedVm("golbat:summary", 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)));
   } catch (e) {

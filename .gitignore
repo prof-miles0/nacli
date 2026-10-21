@@ -4,6 +4,8 @@ dist/
 
 # Local configuration: has passwords, secrets and internal addresses
 config.toml
+config/
+compose.yml
 .env*
 
 # Local data and editor/tooling files

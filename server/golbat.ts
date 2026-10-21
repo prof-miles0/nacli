@@ -168,7 +168,7 @@ export function golbatPanel(
 }
 
 export async function golbatAreas(vm: VictoriaMetricsConfig, golbat: GolbatConfig, timeoutMs: number) {
-  const match = `golbat_pokemon_count_new${golbat.selector ? `{${golbat.selector}}` : ""}`;
+  const match = `golbat_pokemon_count_new{${golbat.selector}}`;
   const areas = await vmLabelValues(vm, "area", match, timeoutMs);
   return areas.filter((a) => a && a !== "unmatched").sort((a, b) => a.localeCompare(b, "en"));
 }
@@ -197,7 +197,7 @@ export async function golbatSummary(
   golbat: GolbatConfig,
   timeoutMs: number,
 ): Promise<GolbatSummary> {
-  const s = golbat.selector || '__name__!=""';
+  const s = golbat.selector;
   const queries: Record<keyof GolbatSummary, string> = {
     pokemonNew: `sum(increase(golbat_pokemon_count_new{${s}}[1h]))`,
     pokemonIv: `sum(increase(golbat_pokemon_count_iv{${s}}[1h]))`,

@@ -22,41 +22,22 @@ request_timeout = "8s"
 # [victoriametrics]).
 history_retention = "24h"
 
-# (Optional) VictoriaMetrics or Prometheus already scraping the instances'
-# /api/metrics. If configured, the charts come from here (up to 30 days) and
-# the dashboard keeps no history of its own.
-# [victoriametrics]
-# url = "https://vm.example.com"
-# username = "vmuser"            # Basic Auth, if required
-# password = "..."
-# bearer_token = "..."           # alternative to username/password
-# instance_label = "instance"    # label identifying each RotomNG
-# selector = 'job="rotom"'       # optional extra filter for all queries
-
-# (Optional) Golbat section of the dashboard. Requires [victoriametrics] scraping
-# Golbat's /metrics. selector filters its series (leave "" if there is only one).
-# With url (and api_secret, your Golbat api_secret) the Dashboard shows a map
-# with the last location of each device (/api/devices/all); this does not
-# require VictoriaMetrics.
-# [golbat]
-# selector = 'instance="golbat"'
-# url = "http://10.0.0.20:9001"
-# api_secret = "..."
-
-# (Optional) Background for the Dashboard map, which shows the devices from
-# [golbat] (requires its url).
+# Basemap for every map in Nacli: the Dashboard (devices, area geofences and
+# controller trails) and Unbound Modes (scout jobs). Configure it: without it
+# the maps only draw their points on a plain grey background, with no streets.
+# The browser loads the tiles directly, so these URLs and key must be public.
 #   style_url          Vector tile style (MapLibre GL), e.g. from CARTO.
 #   style_url_dark     (optional) Style for the dark theme; style_url is used if unset.
-#   tiles_url          Raster tiles {z}/{x}/{y}; used if there is no style_url.
-#   carto_key          (optional) CARTO key; appended as api_key to its URLs.
+#   tiles_url          Raster tiles {z}/{x}/{y}, instead of style_url.
+#   carto_key          (optional) CARTO key, appended as api_key to its URLs.
 #                      It is used by the browser, so it must be a client key.
 #   tiles_attribution  Attribution shown on the map (HTML).
-# [map]
-# style_url = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
-# style_url_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+[map]
+style_url = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+style_url_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
 # tiles_url = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
 # carto_key = "..."
-# tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"
+tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"
 
 # Users who can log in. Add as many [[users]] blocks as you like.
 [[users]]
@@ -109,3 +90,25 @@ url = "http://10.0.0.11:7072"
 vm_instance = "rotom-ng-lunala"
 # headers = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
 # basic_auth = { username = "rotom", password = "..." }
+
+# (Optional) Golbat. Each part enables something different:
+#   url / api_secret  Its API and its api_secret: the devices on the Dashboard
+#                     map (with their trails) and Golbat's state on Status.
+#   vm_instance       Its `instance` label in VictoriaMetrics: the Golbat
+#                     Metrics page, drawn from the stored data (requires
+#                     [victoriametrics]).
+# [golbat]
+# url = "http://10.0.0.20:9001"
+# api_secret = "..."
+# vm_instance = "golbat"
+
+# (Optional) VictoriaMetrics or Prometheus already scraping the instances'
+# /api/metrics. If configured, the charts come from here (up to 30 days) and
+# the dashboard keeps no history of its own.
+# [victoriametrics]
+# url = "https://vm.example.com"
+# username = "vmuser"            # Basic Auth, if required
+# password = "..."
+# bearer_token = "..."           # alternative to username/password
+# instance_label = "instance"    # label identifying each RotomNG
+# selector = 'job="rotom"'       # optional extra filter for all queries

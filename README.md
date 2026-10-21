@@ -78,29 +78,23 @@ only ever talks to Nacli.
 
 Nacli is published as a Docker image for `linux/amd64` and `linux/arm64`.
 
-1. Create a `config.toml` from [`config.example.toml`](config.example.toml) (see
+1. Create `config/config.toml` from [`config.example.toml`](config.example.toml) (see
    *Configuration* below).
 2. Run it:
 
 ```bash
 docker run -d --name nacli -p 7080:7080 \
-  -v $PWD/config.toml:/app/config/config.toml:ro \
+  -v $PWD/config:/app/config:ro \
   ghcr.io/prof-miles0/nacli:latest
 ```
 
 3. Open <http://localhost:7080> and sign in with a user from `config.toml`.
 
-Or with Docker Compose:
+Or with Docker Compose, starting from [`compose.example.yml`](compose.example.yml):
 
-```yaml
-services:
-  nacli:
-    image: ghcr.io/prof-miles0/nacli:latest
-    restart: unless-stopped
-    ports:
-      - "7080:7080"
-    volumes:
-      - ./config.toml:/app/config/config.toml:ro
+```bash
+cp compose.example.yml compose.yml
+docker compose up -d
 ```
 
 | Tag | Points to |
@@ -112,7 +106,9 @@ services:
 > [!TIP]
 > Set a fixed `session_secret` so people stay signed in when the container restarts, and
 > keep `listen = "0.0.0.0:7080"` (the default) so the container is reachable. Changes to
-> `config.toml` are picked up on save, with no restart.
+> `config.toml` are picked up on save, with no restart. Mount its **folder**, as above,
+> not the file alone: editors that save by replacing the file would leave the container
+> reading the old one.
 
 ## ⚙️ Configuration
 
@@ -121,6 +117,11 @@ Everything lives in one `config.toml`. A minimal one, for a single stack:
 ```toml
 [server]
 session_secret = "a-long-random-string"
+
+[map]                              # basemap for every map
+style_url = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+style_url_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"
 
 [[users]]
 username = "admin"
@@ -175,25 +176,29 @@ of the same stack.
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
   controls act on that Dragonite.
 
+#### `[map]`
+
+The basemap for **every map in Nacli**: the Dashboard (devices, geofences and trails) and
+Unbound Modes (scout jobs). Configure it: without it the maps only draw their points on a
+plain background, with no streets. `style_url` (vector, MapLibre GL) and optionally
+`style_url_dark`, or `tiles_url` (raster); `carto_key` is appended as `api_key` to CARTO
+URLs, and `tiles_attribution` is shown on the map. The browser loads tiles directly, so use
+public URLs and a client key. The example uses CARTO's Voyager and Dark Matter styles.
+
+#### `[golbat]` (optional)
+
+- `url` and `api_secret`: Golbat's API. Enables the devices on the Dashboard map (with their
+  trails) and Golbat's state on Status.
+- `vm_instance`: its `instance` label in VictoriaMetrics. Enables the Golbat Metrics page,
+  drawn from the stored data (requires `[victoriametrics]`).
+
 #### `[victoriametrics]` (optional)
 
 Where the charts come from (up to 30 days): `url`, `username`/`password` or `bearer_token`,
 `instance_label` (default `instance`) and an optional `selector` added to every query.
 Without it, Nacli keeps `history_retention` in memory: for RotomNG from what it already polls,
 and for each Dragonite by reading its `/metrics` every 30 s (this needs Dragonite's own `url`,
-not the admin's). Golbat's charts require VictoriaMetrics.
-
-#### `[golbat]` (optional)
-
-`selector` picks Golbat's series in VictoriaMetrics (e.g. `instance="golbat"`). With `url` and
-`api_secret`, the Dashboard shows the device map (Golbat's `/api/devices/all`); the map does
-not need VictoriaMetrics.
-
-#### `[map]` (optional)
-
-The map's basemap (MapLibre GL): `style_url` (vector) and optionally `style_url_dark`, or
-`tiles_url` (raster); `carto_key` is appended as `api_key` to CARTO URLs, and
-`tiles_attribution` is shown on the map. The browser loads tiles directly, so use a client key.
+not the admin's). Golbat's Metrics page requires VictoriaMetrics.
 
 </details>
 

@@ -1,0 +1,30 @@
+# Nacli with Docker Compose.
+#
+#   cp compose.example.yml compose.yml
+#   mkdir config && cp config.example.toml config/config.toml   # then edit it
+#   docker compose up -d
+#
+# Then open http://<server>:7080 and sign in with a user from config.toml.
+# Update to the latest image with: docker compose pull && docker compose up -d
+
+services:
+  nacli:
+    image: ghcr.io/prof-miles0/nacli:latest
+    container_name: nacli
+    restart: unless-stopped
+    ports:
+      # Behind a reverse proxy on the same host, publish it on localhost only:
+      #   - "127.0.0.1:7080:7080"
+      - "7080:7080"
+    volumes:
+      # The folder with config.toml, read-only: Nacli never writes to it and
+      # reloads it on every save. Mount the folder, not the file: editors that
+      # save by replacing the file would leave the container with the old one.
+      - ./config:/app/config:ro
+    # environment:
+    #   TZ: Europe/Madrid            # time zone for the server's log lines
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

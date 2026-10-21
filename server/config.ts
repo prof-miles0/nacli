@@ -71,7 +71,14 @@ export interface AppConfig {
    * Golbat section: charts from VictoriaMetrics (`selector`) and, with `url`,
    * its API (device locations for the Dashboard map).
    */
-  golbat?: { selector: string; api?: { url: string; headers: Record<string, string> } };
+  golbat?: {
+    /** Its `instance` label in VictoriaMetrics, for the stored charts ("" = any). */
+    vmInstance: string;
+    /** PromQL matcher built from vmInstance and [victoriametrics] instance_label. */
+    selector: string;
+    /** Its API (url + api_secret): device locations and queries. */
+    api?: { url: string; headers: Record<string, string> };
+  };
   /** Basemap for the Dashboard map ([map]); sent to the browser, which draws it. */
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
   /** Dragonite section (charts from VictoriaMetrics), one per [[stack]] with [stack.dragonite]. */
@@ -149,11 +156,6 @@ export function loadConfig(path: string): AppConfig {
     throw new Error("config.toml: define at least one [[users]] with username and password");
   }
 
-  if (raw.rotom || raw.dragonite) {
-    throw new Error(
-      "config.toml: [[rotom]] and [[dragonite]] are no longer used; move them to [[stack]] with [stack.rotom] and [stack.dragonite] (see config.example.toml)",
-    );
-  }
   // [[stack]] groups one deployment: its name, its RotomNG and its Dragonite.
   const stacks = ((raw.stack ?? []) as Table[]).map((st, i) => {
     const name = str(st.name).trim();
@@ -196,6 +198,7 @@ export function loadConfig(path: string): AppConfig {
     return { id, name, url, apiSecret, headers, demo, vmInstance };
   });
 
+  const vm = parseVm(raw.victoriametrics as Table | undefined);
   return {
     path: abs,
     title: str(server.title, "Nacli"),
@@ -207,8 +210,8 @@ export function loadConfig(path: string): AppConfig {
     pollIntervalMs: Math.max(2000, parseDuration(server.poll_interval, 10_000)),
     requestTimeoutMs: parseDuration(server.request_timeout, 8000),
     historyRetentionMs: parseDuration(server.history_retention, 24 * 3_600_000),
-    victoriaMetrics: parseVm(raw.victoriametrics as Table | undefined),
-    golbat: raw.golbat ? parseGolbat(raw.golbat as Table) : undefined,
+    victoriaMetrics: vm,
+    golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
     dragonite: parseDragonite(stacks, instances),
     users,
@@ -265,13 +268,16 @@ function parseMap(m: Table) {
   };
 }
 
-function parseGolbat(g: Table) {
+function parseGolbat(g: Table, vm?: VictoriaMetricsConfig) {
   const url = str(g.url).trim().replace(/\/+$/, "");
   if (url && !/^https?:\/\//.test(url)) throw new Error("[golbat] url must start with http:// or https://");
   const headers: Record<string, string> = {};
   // Golbat checks its api_secret in this header.
   if (str(g.api_secret)) headers["X-Golbat-Secret"] = str(g.api_secret);
-  return { selector: str(g.selector).trim(), api: url ? { url, headers } : undefined };
+  const vmInstance = str(g.vm_instance).trim();
+  const label = vm?.instanceLabel ?? "instance";
+  const selector = vmInstance ? `${label}="${vmInstance.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : "";
+  return { vmInstance, selector, api: url ? { url, headers } : undefined };
 }
 
 function parseVm(vm: Table | undefined): VictoriaMetricsConfig | undefined {
