@@ -1,0 +1,10 @@
+node_modules
+dist
+config.toml
+.env*
+data
+.claude
+.git
+.github
+.DS_Store
+*.log

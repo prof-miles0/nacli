@@ -1,0 +1,13 @@
+# Dependencies and build output
+node_modules/
+dist/
+
+# Local configuration: has passwords, secrets and internal addresses
+config.toml
+.env*
+
+# Local data and editor/tooling files
+data/
+.claude/
+.DS_Store
+*.log

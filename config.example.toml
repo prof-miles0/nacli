@@ -1,0 +1,110 @@
+# Nacli dashboard configuration.
+# Copy this file to config.toml and edit it. Changes are reloaded automatically
+# on save (or with SIGHUP); no restart needed.
+
+[server]
+title = "Nacli"
+# Address and port the dashboard listens on.
+listen = "0.0.0.0:7080"
+# Key used to sign sessions. If left empty, one is generated at startup
+# (sessions are lost on restart). Use a long random string.
+session_secret = ""
+# Session duration after logging in.
+session_ttl = "24h"
+# Mark the cookie as Secure (enable it if you serve the dashboard over HTTPS; it
+# is also enabled automatically if the proxy sends X-Forwarded-Proto: https).
+secure_cookies = false
+# How often each RotomNG instance is polled.
+poll_interval = "10s"
+# Maximum wait time per request to an instance.
+request_timeout = "8s"
+# How much history is kept in memory for the charts (only without
+# [victoriametrics]).
+history_retention = "24h"
+
+# (Optional) VictoriaMetrics or Prometheus already scraping the instances'
+# /api/metrics. If configured, the charts come from here (up to 30 days) and
+# the dashboard keeps no history of its own.
+# [victoriametrics]
+# url = "https://vm.example.com"
+# username = "vmuser"            # Basic Auth, if required
+# password = "..."
+# bearer_token = "..."           # alternative to username/password
+# instance_label = "instance"    # label identifying each RotomNG
+# selector = 'job="rotom"'       # optional extra filter for all queries
+
+# (Optional) Golbat section of the dashboard. Requires [victoriametrics] scraping
+# Golbat's /metrics. selector filters its series (leave "" if there is only one).
+# With url (and api_secret, your Golbat api_secret) the Dashboard shows a map
+# with the last location of each device (/api/devices/all); this does not
+# require VictoriaMetrics.
+# [golbat]
+# selector = 'instance="golbat"'
+# url = "http://10.0.0.20:9001"
+# api_secret = "..."
+
+# (Optional) Background for the Dashboard map, which shows the devices from
+# [golbat] (requires its url).
+#   style_url          Vector tile style (MapLibre GL), e.g. from CARTO.
+#   style_url_dark     (optional) Style for the dark theme; style_url is used if unset.
+#   tiles_url          Raster tiles {z}/{x}/{y}; used if there is no style_url.
+#   carto_key          (optional) CARTO key; appended as api_key to its URLs.
+#                      It is used by the browser, so it must be a client key.
+#   tiles_attribution  Attribution shown on the map (HTML).
+# [map]
+# style_url = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+# style_url_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+# tiles_url = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+# carto_key = "..."
+# tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"
+
+# Users who can log in. Add as many [[users]] blocks as you like.
+[[users]]
+username = "admin"
+password = "change-this-password"
+
+# One [[stack]] block per deployment: a RotomNG and, if present, the Dragonite
+# that sends it its controllers.
+#   name  Name shown in the dashboard. If there is a Dragonite, it must match the
+#         one in its user agent ("Dragonite/x.y (Dragonite - <name>)"):
+#         that is how the dashboard checks that its controllers reach this Rotom.
+#
+# [stack.rotom]
+#   url          Root of the RotomNG http_listener, WITHOUT the /api suffix.
+#   api_secret   That instance's http_listener.secret (omit it if it has none).
+#   vm_instance  Its `instance` label in VictoriaMetrics (not needed with demo://).
+#   headers      (optional) Extra headers, e.g. for a proxy in front.
+#   basic_auth   (optional) { username = "...", password = "..." } if the proxy requires Basic Auth.
+#   A "demo://name" url generates sample data without connecting to anything.
+#
+# [stack.dragonite]  (optional; requires [victoriametrics])
+#   vm_instance  Its `instance` label in VictoriaMetrics (charts and Dashboard).
+#   url          (optional) Its API, for the Areas and Accounts tabs: Dragonite's
+#                own ("http://host:7272") or its admin + "/api". The dashboard only
+#                reads; passwords, emails and tokens never leave the server.
+#                Without [victoriametrics], the charts come from its /metrics, which
+#                the dashboard reads every 30 s and keeps history_retention in memory;
+#                for that, url must be Dragonite's own (the admin does not expose it).
+#   api_secret   (optional) Sent as the X-Dragonite-Admin-Secret header.
+#   headers / basic_auth  (optional) Same as in [stack.rotom].
+
+[[stack]]
+name = "Exeggcute"
+
+[stack.rotom]
+url = "http://10.0.0.10:7072"
+vm_instance = "rotom-ng"
+api_secret = ""
+
+[stack.dragonite]
+url = "http://10.0.0.10:7272"
+vm_instance = "dragonite"
+
+[[stack]]
+name = "Lunala"
+
+[stack.rotom]
+url = "http://10.0.0.11:7072"
+vm_instance = "rotom-ng-lunala"
+# headers = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
+# basic_auth = { username = "rotom", password = "..." }
