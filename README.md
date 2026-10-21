@@ -45,7 +45,7 @@ services:
       - ./config.toml:/app/config/config.toml:ro
 ```
 
-Tags: `latest` (main), `sha-<commit>`, and `1.2.3` / `1.2` for a `v1.2.3` git tag.
+Tags: `latest` and `main` (the main branch), `sha-<commit>`, and `1.2.3` / `1.2` for a `v1.2.3` git tag.
 Keep `listen = "0.0.0.0:7080"` in `config.toml` (the default) so the container is
 reachable, and set a fixed `session_secret` so sessions survive restarts.
 
