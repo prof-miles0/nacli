@@ -163,7 +163,6 @@ export interface InstanceMetrics {
 export interface InstanceInfo {
   id: string;
   name: string;
-  demo: boolean;
   reachable: boolean;
   lastError?: string;
   lastPollAt?: number;

@@ -40,7 +40,6 @@ import {
   verifySession,
 } from "./auth.ts";
 import { type AppConfig, loadConfig, type VictoriaMetricsConfig } from "./config.ts";
-import { demoStatus, demoToggleDevice } from "./demo.ts";
 import { RotomRegistry, rotomFetch } from "./rotom.ts";
 import {
   controllerSource,
@@ -1847,15 +1846,6 @@ app.post("/api/rotom/:id/device/:device/logcat-view", async (c) => {
   const device = c.req.param("device");
   console.log(`[proxy] ${c.get("user")} logcat-view ${state.cfg.name}/${device}`);
 
-  if (state.cfg.demo) {
-    const now = new Date();
-    const lines = Array.from({ length: 200 }, (_, i) => {
-      const lvl = "VDIWE"[i % 17 === 0 ? 4 : i % 7 === 0 ? 3 : 2];
-      return `${now.toISOString().slice(5, 10)} ${now.toTimeString().slice(0, 8)}.${String(i).padStart(3, "0")}  1234  1240 ${lvl} Demo    : sample line ${i}`;
-    });
-    return c.json({ files: [{ name: "logcat.txt", text: lines.join("\n"), truncated: false, bytes: 0 }] });
-  }
-
   let res: Response;
   try {
     res = await rotomFetch(state.cfg, `/device/${encodeURIComponent(device)}/action/logcat`, 120_000, {
@@ -1904,8 +1894,6 @@ app.all("/api/rotom/:id/*", async (c) => {
 
   console.log(`[proxy] ${c.get("user")} ${method} ${state.cfg.name}${path}`);
 
-  if (state.cfg.demo) return c.json(demoProxy(state.cfg.id, state.cfg.name, method, path));
-
   try {
     const res = await rotomFetch(state.cfg, path, 60_000, {
       method,
@@ -1924,32 +1912,6 @@ app.all("/api/rotom/:id/*", async (c) => {
     return c.json({ error: `${state.cfg.name}: ${(e as Error).message}` }, 502);
   }
 });
-
-function demoProxy(id: string, name: string, method: string, path: string) {
-  const now = Date.now();
-  if (path === "/job") {
-    return {
-      jobs: [
-        { id: "restart-pogo", description: "Restarts Pokémon GO", exec: "am force-stop com.nianticlabs.pokemongo" },
-        { id: "clear-cache", description: "Clears the app cache", exec: "pm trim-caches 999G" },
-      ],
-    };
-  }
-  if (path === "/job-instance") {
-    return {
-      instances: [
-        { id: 3, job_id: "restart-pogo", started_at_ms: now - 600_000, finished_at_ms: now - 598_000, device_id: "demo", device_origin: "Galilei", result: "Success", status: "completed" },
-        { id: 2, job_id: "clear-cache", started_at_ms: now - 7_200_000, finished_at_ms: now - 7_190_000, device_id: "demo", device_origin: "Bohr", result: "timeout", status: "failed" },
-      ],
-    };
-  }
-  const m = /^\/device\/([^/]+)\/action\/(enable|disable)$/.exec(path);
-  if (m && method === "PUT") {
-    const idx = demoStatus(id, name).devices.findIndex((d) => d.id === m[1]);
-    if (idx >= 0) demoToggleDevice(id, idx, m[2] === "enable");
-  }
-  return { status: "ok", message: `(demo) ${method} ${path}` };
-}
 
 // ---------- Static frontend ----------
 

@@ -53,10 +53,9 @@ password = "change-this-password"
 # [stack.rotom]
 #   url          Root of the RotomNG http_listener, WITHOUT the /api suffix.
 #   api_secret   That instance's http_listener.secret (omit it if it has none).
-#   vm_instance  Its `instance` label in VictoriaMetrics (not needed with demo://).
+#   vm_instance  Its `instance` label in VictoriaMetrics.
 #   headers      (optional) Extra headers, e.g. for a proxy in front.
 #   basic_auth   (optional) { username = "...", password = "..." } if the proxy requires Basic Auth.
-#   A "demo://name" url generates sample data without connecting to anything.
 #
 # [stack.dragonite]  (optional)
 #   vm_instance  Its `instance` label in VictoriaMetrics (charts and Dashboard).

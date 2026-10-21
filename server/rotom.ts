@@ -7,7 +7,6 @@ import type {
   RotomStatus,
 } from "../shared/types.ts";
 import type { AppConfig, RotomInstanceConfig } from "./config.ts";
-import { demoConfig, demoMetrics, demoStatus } from "./demo.ts";
 import { parsePrometheus, responsesByStatus, summarizeMetrics } from "./metrics.ts";
 
 /** Metrics are heavier (~40KB) and change slowly; fetch every Nth poll. */
@@ -123,19 +122,13 @@ class InstanceState {
       let status: RotomStatus;
       let config: RotomConfig;
       let metricsText: string | undefined;
-      if (this.cfg.demo) {
-        status = demoStatus(this.cfg.id, this.cfg.name);
-        config = demoConfig(this.cfg.name);
-        metricsText = demoMetrics(this.cfg.id, this.cfg.name);
-      } else {
-        [status, config] = await Promise.all([
-          getJson<RotomStatus>(this.cfg, "/status", timeout),
-          getJson<{ config: RotomConfig }>(this.cfg, "/config", timeout).then((r) => r.config),
-        ]);
-        if (wantMetrics) {
-          // Metrics are optional: a failure here must not mark the instance down.
-          metricsText = await getText(this.cfg, "/metrics", timeout).catch(() => undefined);
-        }
+      [status, config] = await Promise.all([
+        getJson<RotomStatus>(this.cfg, "/status", timeout),
+        getJson<{ config: RotomConfig }>(this.cfg, "/config", timeout).then((r) => r.config),
+      ]);
+      if (wantMetrics) {
+        // Metrics are optional: a failure here must not mark the instance down.
+        metricsText = await getText(this.cfg, "/metrics", timeout).catch(() => undefined);
       }
       this.status = { ...status, devices: status.devices ?? [], controllers: status.controllers ?? [] };
       this.config = config;
@@ -200,7 +193,6 @@ class InstanceState {
       name: this.cfg.name,
       // url deliberately omitted: instances often live on internal addresses
       // and the browser never talks to them directly.
-      demo: this.cfg.demo,
       reachable: this.reachable,
       lastError: this.lastError,
       lastPollAt: this.lastPollAt,

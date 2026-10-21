@@ -15,8 +15,6 @@ export interface RotomInstanceConfig {
   url: string;
   apiSecret?: string;
   headers: Record<string, string>;
-  /** True for `demo://` urls: synthetic data, no network. */
-  demo: boolean;
   /** Value of the VictoriaMetrics instance label for this RotomNG. */
   vmInstance: string;
 }
@@ -171,9 +169,8 @@ export function loadConfig(path: string): AppConfig {
   const instances = rotomRaw.map((r, i) => {
     const url = str(r.url).trim().replace(/\/+$/, "").replace(/\/api$/, "");
     if (!url) throw new Error(`[stack.rotom] of "${str(r.name)}": missing url`);
-    const demo = url.startsWith("demo://");
-    if (!demo && !/^https?:\/\//.test(url)) {
-      throw new Error(`[stack.rotom] of "${str(r.name)}": url must start with http://, https:// or demo://`);
+    if (!/^https?:\/\//.test(url)) {
+      throw new Error(`[stack.rotom] of "${str(r.name)}": url must start with http:// or https://`);
     }
     const name = str(r.name).trim() || url.replace(/^\w+:\/\//, "");
     let id = slugify(name);
@@ -194,8 +191,8 @@ export function loadConfig(path: string): AppConfig {
     // Its `instance` label in VictoriaMetrics. Required: guessing it from the
     // url breaks as soon as the url is an IP or goes through another proxy.
     const vmInstance = str(r.vm_instance).trim();
-    if (!vmInstance && !demo) throw new Error(`[stack.rotom] of "${name}": missing vm_instance (its instance label in VictoriaMetrics)`);
-    return { id, name, url, apiSecret, headers, demo, vmInstance };
+    if (!vmInstance) throw new Error(`[stack.rotom] of "${name}": missing vm_instance (its instance label in VictoriaMetrics)`);
+    return { id, name, url, apiSecret, headers, vmInstance };
   });
 
   const vm = parseVm(raw.victoriametrics as Table | undefined);

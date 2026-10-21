@@ -169,7 +169,6 @@ of the same stack.
 - **`[stack.rotom]`**: `url` (root of the `http_listener`, **without** `/api`), `api_secret`,
   `vm_instance` (its `instance` label in VictoriaMetrics) and, optionally, `headers` and
   `basic_auth = { username = "...", password = "..." }` for a proxy in front.
-  `url = "demo://anything"` generates sample data.
 - **`[stack.dragonite]`** (optional): `url` of its API, either Dragonite's own
   (`http://host:7272`) or its admin plus `/api`; `vm_instance`; and optionally `api_secret`
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
