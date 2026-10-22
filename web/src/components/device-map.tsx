@@ -22,7 +22,9 @@ const MIXED = "#71717a";
 
 export const isDark = () => document.documentElement.classList.contains("dark");
 /** Layers this component adds on top of the basemap (kept across style swaps). */
-const OUR_LAYERS = ["geofence-fill", "geofence-line", "trail", "clusters-halo", "clusters", "cluster-count", "devices-halo", "devices", "selected-glow", "selected-ring"];
+const OUR_LAYERS = ["geofence-fill", "geofence-line", "trail", "clusters-halo", "clusters", "cluster-count", "devices-halo", "devices", "devices-shape", "selected-glow", "selected-ring"];
+/** Layers a device can be clicked or hovered on. */
+const DEVICE_LAYERS = ["devices", "devices-shape"];
 const OUR_SOURCES = ["geofences", "trail", "devices", "selected"];
 /** Same limit as the server's trail: further than this is a jump, not a walk. */
 const JUMP_KM = 50;
@@ -93,6 +95,62 @@ const MODES: Record<string, string> = {
   RarePokemonMode: "Rare",
   LevelMode: "Level",
 };
+
+/**
+ * Controllers that do not scan an area wear another shape, so they are not
+ * mistaken for the area ones (circles).
+ */
+type Shape = "circle" | "diamond" | "square" | "triangle";
+const SHAPES: { mode: string; shape: Exclude<Shape, "circle">; label: string }[] = [
+  { mode: "InvasionMode", shape: "diamond", label: "Invasion" },
+  { mode: "LevelMode", shape: "square", label: "Level" },
+  { mode: "ScoutMode", shape: "triangle", label: "Scout" },
+];
+const shapeOf = (d: MapDevice): Shape => SHAPES.find((x) => x.mode === d.dragonite?.mode)?.shape ?? "circle";
+const SHAPE_IMAGE = "nacli-shape";
+
+/** The outline of a shape inside a square of side s, as an SVG path or on a canvas. */
+function shapePoints(shape: Exclude<Shape, "circle">, s: number, pad: number): [number, number][] {
+  if (shape === "diamond") return [[s / 2, pad], [s - pad, s / 2], [s / 2, s - pad], [pad, s / 2]];
+  if (shape === "triangle") return [[s / 2, pad], [s - pad, s - pad * 1.4], [pad, s - pad * 1.4]];
+  const q = pad * 1.6;
+  return [[q, q], [s - q, q], [s - q, s - q], [q, s - q]];
+}
+
+/**
+ * The map icon named `nacli-shape|<shape>|<fill>|<stroke>|<small>`, drawn on
+ * demand (styleimagemissing), so every colour and theme gets its own.
+ */
+function shapeImage(name: string) {
+  const [prefix, shape, fill, stroke, small] = name.split("|");
+  if (prefix !== SHAPE_IMAGE || !SHAPES.some((x) => x.shape === shape)) return undefined;
+  const ratio = 2;
+  const s = (small === "1" ? 13 : 17) * ratio;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = s;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.beginPath();
+  shapePoints(shape as Exclude<Shape, "circle">, s, 2 * ratio).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.lineJoin = "round";
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 1.5 * ratio;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+  return { image: ctx.getImageData(0, 0, s, s), pixelRatio: ratio };
+}
+
+/** The same shapes for the legend, in the page's text colour. */
+function ShapeIcon({ shape, className }: { shape: Exclude<Shape, "circle">; className?: string }) {
+  const pts = shapePoints(shape, 12, 1.5);
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden className={cn("size-3 shrink-0", className)}>
+      <polygon points={pts.map((p) => p.join(",")).join(" ")} fill="currentColor" />
+    </svg>
+  );
+}
 
 export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -363,6 +421,12 @@ export function DeviceMap({
       transformRequest: (url) => ({ url: withKey(url, basemap?.cartoKey) }),
     });
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-left");
+    // The shaped device icons are drawn the first time the map asks for them
+    // (and again after a theme change swaps the style).
+    m.on("styleimagemissing", (e) => {
+      const img = shapeImage(e.id);
+      if (img && !m.hasImage(e.id)) m.addImage(e.id, img.image, { pixelRatio: img.pixelRatio });
+    });
     m.on("moveend", () => {
       view.current = { center: m.getCenter(), zoom: m.getZoom() };
     });
@@ -391,13 +455,15 @@ export function DeviceMap({
         layout: { "line-join": "round" },
         paint: {
           "line-color": ["get", "color"],
-          "line-width": ["case", ["get", "selected"], ["interpolate", ["linear"], ["zoom"], 6, 2.5, 14, 4], ["interpolate", ["linear"], ["zoom"], 6, 1, 14, 2.5]],
+          // One zoom interpolation, with the selected width chosen at each stop
+          // (MapLibre allows a single zoom expression per property).
+          "line-width": ["interpolate", ["linear"], ["zoom"], 6, ["case", ["get", "selected"], 2.5, 1], 14, ["case", ["get", "selected"], 4, 2.5]],
           "line-opacity": ["case", ["get", "selected"], 1, 0.85],
         },
       });
       // A click on an area selects it (a device or cluster on top wins).
       m.on("click", "geofence-fill", (e) => {
-        if (m.queryRenderedFeatures(e.point, { layers: ["devices", "clusters"] }).length) return;
+        if (m.queryRenderedFeatures(e.point, { layers: [...DEVICE_LAYERS, "clusters"] }).length) return;
         const key = e.features?.[0]?.properties?.key;
         if (typeof key !== "string") return;
         setSelKey(undefined);
@@ -408,7 +474,7 @@ export function DeviceMap({
       });
       // Hovering an area names it, unless a device is under the pointer.
       m.on("mousemove", "geofence-fill", (e) => {
-        if (m.queryRenderedFeatures(e.point, { layers: ["devices", "clusters"] }).length) return;
+        if (m.queryRenderedFeatures(e.point, { layers: [...DEVICE_LAYERS, "clusters"] }).length) return;
         const p = e.features?.[0]?.properties;
         if (!p) return;
         popup
@@ -521,7 +587,7 @@ export function DeviceMap({
         id: "devices",
         type: "circle",
         source: "devices",
-        filter: ["!", ["has", "point_count"]],
+        filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "shape"], "circle"]],
         paint: {
           "circle-color": ["get", "color"],
           "circle-radius": ["get", "radius"],
@@ -529,6 +595,15 @@ export function DeviceMap({
           "circle-stroke-color": stroke,
           "circle-stroke-width": 1.5,
         },
+      });
+      // Invasion, Level and Scout controllers: their own shape (see SHAPES).
+      m.addLayer({
+        id: "devices-shape",
+        type: "symbol",
+        source: "devices",
+        filter: ["all", ["!", ["has", "point_count"]], ["!=", ["get", "shape"], "circle"]],
+        layout: { "icon-image": ["get", "icon"], "icon-allow-overlap": true, "icon-ignore-placement": true },
+        paint: { "icon-opacity": ["get", "opacity"] },
       });
       // The selected device, on its own (unclustered) source so its ring shows
       // at any zoom, even while the device itself is inside a cluster.
@@ -550,16 +625,18 @@ export function DeviceMap({
           "circle-stroke-width": 2.5,
         },
       });
-      m.on("click", "devices", (e) => {
-        const d = devicesRef.current.find((x) => x.id === e.features?.[0]?.properties?.id);
-        if (!d) return;
-        setSelKey(selKeyOf(d));
-        setSelArea(undefined);
-        setFollowing(true);
-      });
+      for (const layer of DEVICE_LAYERS) {
+        m.on("click", layer, (e) => {
+          const d = devicesRef.current.find((x) => x.id === e.features?.[0]?.properties?.id);
+          if (!d) return;
+          setSelKey(selKeyOf(d));
+          setSelArea(undefined);
+          setFollowing(true);
+        });
+      }
       // A click on empty map (no device, no cluster) clears the selection.
       m.on("click", (e) => {
-        if (m.queryRenderedFeatures(e.point, { layers: ["devices", "clusters"] }).length) return;
+        if (m.queryRenderedFeatures(e.point, { layers: [...DEVICE_LAYERS, "clusters"] }).length) return;
         setSelKey(undefined);
         if (!m.queryRenderedFeatures(e.point, { layers: ["geofence-fill"] }).length) setSelArea(undefined);
       });
@@ -579,20 +656,22 @@ export function DeviceMap({
       m.on("mouseleave", "clusters", () => {
         m.getCanvas().style.cursor = "";
       });
-      m.on("mousemove", "devices", (e) => {
-        m.getCanvas().style.cursor = "pointer";
-        const f = e.features?.[0];
-        const d = devicesRef.current.find((x) => x.id === f?.properties?.id);
-        if (!d || !f) return;
-        popup
-          .setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number])
-          .setHTML(popupHtml(d, String(f.properties?.color ?? "#9ca3af")))
-          .addTo(m);
-      });
-      m.on("mouseleave", "devices", () => {
-        m.getCanvas().style.cursor = "";
-        popup.remove();
-      });
+      for (const layer of DEVICE_LAYERS) {
+        m.on("mousemove", layer, (e) => {
+          m.getCanvas().style.cursor = "pointer";
+          const f = e.features?.[0];
+          const d = devicesRef.current.find((x) => x.id === f?.properties?.id);
+          if (!d || !f) return;
+          popup
+            .setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number])
+            .setHTML(popupHtml(d, String(f.properties?.color ?? "#9ca3af")))
+            .addTo(m);
+        });
+        m.on("mouseleave", layer, () => {
+          m.getCanvas().style.cursor = "";
+          popup.remove();
+        });
+      }
       setReady(true);
     });
     map.current = m;
@@ -658,6 +737,8 @@ export function DeviceMap({
         .sort((a, b) => a.lastUpdate - b.lastUpdate)
         .map((d) => {
           const stale = t - d.lastUpdate >= STALE_MS;
+          const fill = stale || !d.rotom ? "#9ca3af" : resolveColor(color(d.rotom.instanceId));
+          const shape = shapeOf(d);
           return {
             type: "Feature",
             geometry: { type: "Point", coordinates: [d.lon, d.lat] },
@@ -665,9 +746,11 @@ export function DeviceMap({
               id: d.id,
               inst: stale || !d.rotom ? -1 : instances.findIndex((i) => i.id === d.rotom!.instanceId),
               live: stale ? 0 : 1,
-              color: stale || !d.rotom ? "#9ca3af" : resolveColor(color(d.rotom.instanceId)),
+              color: fill,
               radius: stale ? 4.5 : 6,
               opacity: stale ? 0.55 : 1,
+              shape,
+              icon: shape === "circle" ? "" : [SHAPE_IMAGE, shape, fill, dark ? "#18181b" : "#ffffff", stale ? "1" : "0"].join("|"),
             },
           };
         }),
@@ -677,7 +760,7 @@ export function DeviceMap({
       fitted.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, q.data, instances, color]);
+  }, [ready, q.data, instances, color, dark]);
 
   useEffect(() => {
     const src = map.current?.getSource("geofences") as maplibregl.GeoJSONSource | undefined;
@@ -819,6 +902,8 @@ export function DeviceMap({
       ? instances.map((i) => ({ i, n: live.filter((d) => d.rotom?.instanceId === i.id).length })).filter((x) => x.n > 0)
       : [];
   const unknown = live.filter((d) => !d.rotom).length;
+  // The shaped controllers on the map now, for their legend.
+  const shaped = SHAPES.map((x) => ({ ...x, n: live.filter((d) => shapeOf(d) === x.shape).length })).filter((x) => x.n > 0);
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
@@ -864,6 +949,17 @@ export function DeviceMap({
                     <span className="font-semibold tabular-nums">{unknown}</span>
                   </span>
                 ) : null}
+              </div>
+            ) : null}
+            {shaped.length ? (
+              <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
+                {shaped.map((x) => (
+                  <span key={x.shape} className="inline-flex items-center gap-1.5">
+                    <ShapeIcon shape={x.shape} className="text-muted-foreground" />
+                    <span className="text-muted-foreground">{x.label}</span>
+                    <span className="font-semibold tabular-nums">{x.n}</span>
+                  </span>
+                ))}
               </div>
             ) : null}
           </div>
