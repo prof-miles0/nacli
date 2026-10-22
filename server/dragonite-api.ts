@@ -280,63 +280,6 @@ export async function setAreaEnabled(d: DragoniteConfig, id: number, on: boolean
   await call(d, `/areas/${id}/${on ? "enable" : "disable"}`, timeoutMs, { method: "GET", json: false });
 }
 
-/** Fields the panel may change; anything else (routes, geofences) is left alone. */
-export interface AreaPatch {
-  name?: string;
-  pokemon?: { enabled?: boolean; workers?: number; scout?: boolean; invasion?: boolean };
-  quest?: { enabled?: boolean; workers?: number; hours?: number[] };
-  fort?: { enabled?: boolean; workers?: number; prioRaid?: boolean; showcase?: boolean; invasion?: boolean };
-  rare?: { enabled?: boolean; workers?: number; permyriad?: number };
-}
-
-/**
- * Applies a patch as the admin does (PATCH /v2/areas/{id}). Each mode is sent
- * whole, read first and changed only where asked, so its route and geofence
- * are kept whatever Dragonite does with a partial object.
- */
-export async function updateArea(d: DragoniteConfig, id: number, p: AreaPatch, timeoutMs: number) {
-  const { json } = await call(d, `/v2/areas/${id}`, timeoutMs);
-  const cur = obj(json);
-  const body: Raw = {};
-  const set = (o: Raw, k: string, v: unknown) => {
-    if (v !== undefined) o[k] = v;
-  };
-  if (p.name !== undefined) body.name = p.name;
-  if (p.pokemon) {
-    set(body, "enable_pokemon", p.pokemon.enabled);
-    const m = { ...obj(cur.pokemon_mode) };
-    set(m, "workers", p.pokemon.workers);
-    set(m, "enable_scout", p.pokemon.scout);
-    set(m, "invasion", p.pokemon.invasion);
-    body.pokemon_mode = m;
-  }
-  if (p.quest) {
-    set(body, "enable_quests", p.quest.enabled);
-    const m = { ...obj(cur.quest_mode) };
-    set(m, "workers", p.quest.workers);
-    set(m, "hours", p.quest.hours);
-    body.quest_mode = m;
-  }
-  if (p.fort) {
-    set(body, "enable_forts", p.fort.enabled);
-    const m = { ...obj(cur.fort_mode) };
-    set(m, "workers", p.fort.workers);
-    set(m, "prio_raid", p.fort.prioRaid);
-    set(m, "showcase", p.fort.showcase);
-    set(m, "invasion", p.fort.invasion);
-    body.fort_mode = m;
-  }
-  if (p.rare) {
-    set(body, "enable_rare_pokemon", p.rare.enabled);
-    const m = { ...obj(cur.rare_pokemon_mode) };
-    set(m, "workers", p.rare.workers);
-    set(m, "permyriad", p.rare.permyriad);
-    body.rare_pokemon_mode = m;
-  }
-  const res = await call(d, `/v2/areas/${id}`, timeoutMs, { method: "PATCH", body });
-  return summarizeArea(obj(res.json));
-}
-
 // ---- Copying and moving areas between Dragonites ----
 
 /**
@@ -361,6 +304,40 @@ export async function createArea(d: DragoniteConfig, area: Raw, enable: boolean,
     }
   }
   return id;
+}
+
+/** One area exactly as Dragonite stores it: geofence, routes and every mode (no secrets in it). */
+export async function getArea(d: DragoniteConfig, id: number, timeoutMs: number) {
+  const { json } = await call(d, `/v2/areas/${id}`, timeoutMs);
+  const { $schema: _schema, ...area } = obj(json);
+  return area;
+}
+
+/**
+ * Saves a whole area as the admin's "Edit" does (PATCH /v2/areas/{id} with
+ * every field): name, geofence, routes, overrides and modes. Enabling is left
+ * to the enable/disable calls, which also start or stop its workers.
+ */
+export async function saveArea(d: DragoniteConfig, id: number, area: Raw, timeoutMs: number) {
+  const { id: _id, enabled: _enabled, $schema: _schema, ...body } = area;
+  await call(d, `/v2/areas/${id}`, timeoutMs, { method: "PATCH", body, json: false });
+}
+
+/**
+ * Starts or stops quest scanning, as the admin's quest buttons do: in one area
+ * (POST /quest/{id}/start|stop) or in every active area ("all"). `clear`
+ * clears the stored quests first (Dragonite's default when starting).
+ */
+export async function questAction(d: DragoniteConfig, area: number | "all", action: "start" | "stop", clear: boolean, timeoutMs: number) {
+  const { json } = await call(d, `/quest/${area}/${action}?clear=${clear}`, timeoutMs, { method: "POST", body: {} });
+  const r = obj(json);
+  const errors = obj(r.errors);
+  return {
+    message: String(r.message ?? ""),
+    // Per area for "all": which ones took it and why the rest did not.
+    areas: Object.fromEntries(Object.entries(obj(r.areas)).map(([k, v]) => [k, v === true])),
+    errors: Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, String(v)])),
+  };
 }
 
 export async function transferArea(

@@ -226,6 +226,7 @@ export function Modal({
   children,
   footer,
   wide,
+  large,
   full,
 }: {
   open: boolean;
@@ -234,6 +235,8 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** Wider still, for forms with a map beside their fields. */
+  large?: boolean;
   /** Near full-screen, for content like logs. */
   full?: boolean;
 }) {
@@ -254,7 +257,7 @@ export function Modal({
         aria-modal
         className={cn(
           "animate-in relative flex max-h-[90vh] w-full flex-col gap-4 overflow-hidden rounded-xl border bg-card p-5 shadow-2xl",
-          full ? "h-[88vh] max-w-6xl" : wide ? "max-w-3xl" : "max-w-md",
+          full ? "h-[88vh] max-w-6xl" : large ? "max-w-5xl" : wide ? "max-w-3xl" : "max-w-md",
         )}
       >
         <div className="flex items-start justify-between gap-4">

@@ -1,10 +1,12 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, Check, ChevronRight, Copy, Minus, Pencil, Plus } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronRight, CirclePlay, CircleStop, Copy, Eye, Minus, Pencil, Plus } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { DragoniteArea, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
 import { useNotify } from "@/components/actions";
 import { toast } from "@/components/toaster";
 import { CreateAreaModal } from "@/components/area-create";
+import { AreaEditModal, AreaViewModal } from "@/components/area-view";
+import { QuestModal, type QuestRequest } from "@/components/quest-actions";
 import { type FolderTab, FolderTabs, tabTint } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { MenuButton } from "@/components/menu-button";
@@ -188,14 +190,12 @@ export function DragoniteAreasPage() {
                 : undefined
             : undefined
         }
-        toolbar={
-          <>
-            <SearchBox value={search} onChange={setSearch} placeholder="Search areas…" />
-            <Button onClick={() => setCreating(true)}>
-              <Plus />
-              New area
-            </Button>
-          </>
+        toolbar={<SearchBox value={search} onChange={setSearch} placeholder="Search areas…" />}
+        actions={
+          <Button onClick={() => setCreating(true)}>
+            <Plus />
+            New area
+          </Button>
         }
       />
       {creating ? <CreateAreaModal stacks={withApi} initial={current.id} onClose={() => setCreating(false)} /> : null}
@@ -238,6 +238,7 @@ function StackAreas({
   tabs,
   tabEdge,
   toolbar,
+  actions,
 }: {
   stack: DragoniteInfo;
   stacks: DragoniteInfo[];
@@ -248,11 +249,28 @@ function StackAreas({
   tabEdge?: "left" | "right";
   /** Shown between the header and the areas (the search box). */
   toolbar?: React.ReactNode;
+  /** Buttons at the right of that row (e.g. "New area"). */
+  actions?: React.ReactNode;
 }) {
   const color = useInstanceColor();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<DragoniteArea>();
+  const [viewing, setViewing] = useState<DragoniteArea>();
+  /** The area's name, which opens its View (the admin's "Show"); the rest of the row expands it. */
+  const nameLink = (a: DragoniteArea, className: string) => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        setViewing(a);
+      }}
+      title="View its geofence, routes and settings"
+      className={cn("min-w-0 truncate text-left underline-offset-4 hover:underline", !a.enabled && "text-muted-foreground", className)}
+    >
+      {a.name}
+    </button>
+  );
   // The switch acts at once (no confirmation): it shows the new state while
   // Dragonite applies it, and goes back with a message if it fails.
   const [pendingOn, setPendingOn] = useState<Record<number, boolean>>({});
@@ -274,36 +292,57 @@ function StackAreas({
   };
   const [transfer, setTransfer] = useState<{ area: DragoniteArea; move: boolean }>();
   const others = stacks.filter((x) => x.id !== stack.id);
-  /** The "…" menu of an area: edit it, or copy/move it to another stack. */
+  const [quest, setQuest] = useState<QuestRequest>();
+  /** Why an area cannot scan quests now, if it cannot. */
+  const noQuests = (a: DragoniteArea) => (!a.enabled ? "The area is disabled" : !a.quest.enabled ? "Its quest mode is off" : undefined);
+  /** The "…" menu of an area: edit it, its quests, and copy/move it to another stack (only with more than one). */
   const menu = (a: DragoniteArea) => (
     <MenuButton
       kind="Area"
       subject={a.name}
       items={[
-        { key: "edit", label: "Edit", hint: "Workers and per-mode options", icon: Pencil, onSelect: () => setEditing(a) },
+        { key: "view", label: "View", hint: "Its geofence, routes and settings", icon: Eye, onSelect: () => setViewing(a) },
+        { key: "edit", label: "Edit", hint: "Geofence, routes, workers and every mode", icon: Pencil, onSelect: () => setEditing(a) },
         {
-          key: "copy",
-          label: "Copy to another stack",
-          hint: others.length ? "Creates a copy, with its route, in another Dragonite" : "No other stack with an API",
-          icon: Copy,
-          disabled: !others.length,
-          onSelect: () => setTransfer({ area: a, move: false }),
+          key: "quest-start",
+          label: "Start quests",
+          hint: noQuests(a) ?? "Scans its Pokéstops' quests now",
+          icon: CirclePlay,
+          positive: true,
+          disabled: !!noQuests(a),
+          onSelect: () => setQuest({ action: "start", area: a }),
         },
         {
-          key: "move",
-          label: "Move to another stack",
-          // An area that is scanning must be stopped first: moving it would cut
-          // its workers off mid-route.
-          hint: !others.length
-            ? "No other stack with an API"
-            : a.enabled
-              ? "Disable it first to move it"
-              : "Copies it, then deletes it from this stack",
-          icon: ArrowRightLeft,
+          key: "quest-stop",
+          label: "Stop quests",
+          hint: noQuests(a) ?? "Stops its quest scan",
+          icon: CircleStop,
           danger: true,
-          disabled: !others.length || a.enabled,
-          onSelect: () => setTransfer({ area: a, move: true }),
+          disabled: !!noQuests(a),
+          onSelect: () => setQuest({ action: "stop", area: a }),
         },
+        ...(others.length
+          ? [
+              {
+                key: "copy",
+                label: "Copy to another stack",
+                hint: "Creates a copy, with its route, in another Dragonite",
+                icon: Copy,
+                onSelect: () => setTransfer({ area: a, move: false }),
+              },
+              {
+                key: "move",
+                label: "Move to another stack",
+                // An area that is scanning must be stopped first: moving it would cut
+                // its workers off mid-route.
+                hint: a.enabled ? "Disable it first to move it" : "Copies it, then deletes it from this stack",
+                icon: ArrowRightLeft,
+                danger: true,
+                disabled: a.enabled,
+                onSelect: () => setTransfer({ area: a, move: true }),
+              },
+            ]
+          : []),
       ]}
     />
   );
@@ -358,11 +397,13 @@ function StackAreas({
         return (
           <div key={a.id} className="flex flex-col gap-2 px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <button type="button" onClick={() => toggle(a.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open}>
-                <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-                <StatusDot tone={st.tone} label={st.label} detail={st.detail} />
-                <span className={cn("truncate text-sm font-medium", !a.enabled && "text-muted-foreground")}>{a.name}</span>
-              </button>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <button type="button" onClick={() => toggle(a.id)} className="flex shrink-0 items-center gap-2" aria-expanded={open} aria-label={`Details of ${a.name}`}>
+                  <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+                  <StatusDot tone={st.tone} label={st.label} detail={st.detail} />
+                </button>
+                {nameLink(a, "text-sm font-medium")}
+              </div>
               <Switch
                 on={pendingOn[a.id] ?? a.enabled}
                 busy={a.id in pendingOn}
@@ -436,7 +477,7 @@ function StackAreas({
                   <td>
                     <div className="flex items-center gap-2.5">
                       <StatusDot tone={st.tone} label={st.label} detail={st.detail} />
-                      <span className={cn("font-medium whitespace-nowrap", !a.enabled && "text-muted-foreground")}>{a.name}</span>
+                      {nameLink(a, "font-medium whitespace-nowrap")}
                     </div>
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
@@ -546,7 +587,31 @@ function StackAreas({
 
       </div>
 
-      {toolbar ? <div className="mt-2 flex flex-wrap items-center justify-between gap-2">{toolbar}</div> : null}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {toolbar}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* The admin's quest buttons, for every active area of this stack. */}
+          <Button
+            variant="outline"
+            className="border-green-500/40 text-green-400 hover:bg-green-500/10 hover:text-green-300"
+            onClick={() => setQuest({ action: "start" })}
+            disabled={!q.data}
+          >
+            <CirclePlay />
+            Start all quests
+          </Button>
+          <Button
+            variant="outline"
+            className="border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+            onClick={() => setQuest({ action: "stop" })}
+            disabled={!q.data}
+          >
+            <CircleStop />
+            Stop all quests
+          </Button>
+          {actions}
+        </div>
+      </div>
 
       {q.error ? (
         <p className="text-sm text-red-300">{(q.error as Error).message}</p>
@@ -570,8 +635,20 @@ function StackAreas({
       )}
 
       {notice}
+      {quest ? <QuestModal stack={stack} areas={q.data?.areas ?? []} request={quest} onClose={() => setQuest(undefined)} /> : null}
+      {viewing ? (
+        <AreaViewModal
+          stack={stack}
+          area={viewing}
+          onClose={() => setViewing(undefined)}
+          onEdit={() => {
+            setEditing(viewing);
+            setViewing(undefined);
+          }}
+        />
+      ) : null}
       {editing ? (
-        <AreaEditModal stack={stack} area={editing} onClose={() => setEditing(undefined)} onDone={refresh} />
+        <AreaEditModal stack={stack} area={editing} onClose={() => setEditing(undefined)} />
       ) : null}
       {transfer ? (
         <TransferModal
@@ -713,230 +790,6 @@ export function Switch({
     >
       <span className={cn("absolute size-4 rounded-full bg-white shadow transition-transform", on ? "translate-x-4.5" : "translate-x-0.5")} />
     </button>
-  );
-}
-
-type Draft = {
-  name: string;
-  pokemon: { enabled: boolean; workers: number; scout: boolean; invasion: boolean };
-  quest: { enabled: boolean; workers: number; hours: number[] };
-  fort: { enabled: boolean; workers: number; prioRaid: boolean; showcase: boolean; invasion: boolean };
-  rare: { enabled: boolean; workers: number; permyriad: number };
-};
-
-const draftOf = (a: DragoniteArea): Draft => ({
-  name: a.name,
-  pokemon: { enabled: a.pokemon.enabled, workers: a.pokemon.workers, scout: a.pokemon.scout, invasion: a.pokemon.invasion },
-  quest: { enabled: a.quest.enabled, workers: a.quest.workers, hours: [...a.quest.hours] },
-  fort: { ...a.fort },
-  rare: { ...a.rare },
-});
-
-/** Only what changed, mode by mode (the server fills in the rest of each mode). */
-function diff(a: Draft, b: Draft) {
-  const out: Record<string, unknown> = {};
-  if (a.name !== b.name) out.name = b.name;
-  for (const k of ["pokemon", "quest", "fort", "rare"] as const) {
-    const changed: Record<string, unknown> = {};
-    for (const [f, v] of Object.entries(b[k])) {
-      const old = (a[k] as Record<string, unknown>)[f];
-      if (JSON.stringify(old) !== JSON.stringify(v)) changed[f] = v;
-    }
-    if (Object.keys(changed).length) out[k] = changed;
-  }
-  return out;
-}
-
-/** The area's settings, as in Dragonite's admin (minus routes and geofences). */
-function AreaEditModal({
-  stack,
-  area,
-  onClose,
-  onDone,
-}: {
-  stack: DragoniteInfo;
-  area: DragoniteArea;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const initial = draftOf(area);
-  const [d, setD] = useState<Draft>(initial);
-  const changes = diff(initial, d);
-  const dirty = Object.keys(changes).length > 0;
-  const m = useMutation({
-    mutationFn: () => endpoints.updateArea(stack.id, area.id, changes),
-    onSuccess: () => {
-      onDone();
-      onClose();
-    },
-  });
-  const set = <K extends keyof Draft>(k: K, v: Partial<Draft[K]>) =>
-    setD((x) => ({ ...x, [k]: typeof x[k] === "object" ? { ...(x[k] as object), ...v } : v }));
-
-  return (
-    <Modal
-      open
-      wide
-      onClose={onClose}
-      title={
-        <span className="flex items-center gap-2">
-          Edit area
-          <span className="text-muted-foreground">· {stack.name}</span>
-        </span>
-      }
-      footer={
-        <>
-          <span className="mr-auto text-xs text-muted-foreground">
-            {dirty ? `${Object.keys(changes).length} section${Object.keys(changes).length === 1 ? "" : "s"} changed` : "No changes"}
-          </span>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={() => m.mutate()} disabled={!dirty || m.isPending}>
-            {m.isPending ? <Spinner className="size-4" /> : null}
-            Save
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-5">
-        <label className="flex flex-col gap-1.5">
-          <Label>Name</Label>
-          <Input value={d.name} onChange={(e) => setD((x) => ({ ...x, name: e.target.value }))} maxLength={64} />
-        </label>
-
-        <ModeBox
-          title="Pokémon"
-          on={d.pokemon.enabled}
-          onToggle={(v) => set("pokemon", { enabled: v })}
-          workers={d.pokemon.workers}
-          onWorkers={(v) => set("pokemon", { workers: v })}
-        >
-          <Check2 label="Scout" on={d.pokemon.scout} onChange={(v) => set("pokemon", { scout: v })} />
-          <Check2 label="Invasions" on={d.pokemon.invasion} onChange={(v) => set("pokemon", { invasion: v })} />
-        </ModeBox>
-
-        <ModeBox
-          title="Quests"
-          on={d.quest.enabled}
-          onToggle={(v) => set("quest", { enabled: v })}
-          workers={d.quest.workers}
-          onWorkers={(v) => set("quest", { workers: v })}
-        >
-          <div className="flex w-full flex-col gap-1.5">
-            <span className="text-xs text-muted-foreground">
-              Hours {d.quest.hours.length ? `(${d.quest.hours.length})` : "· none selected"}
-            </span>
-            <div className="grid grid-cols-12 gap-1">
-              {Array.from({ length: 24 }, (_, h) => {
-                const sel = d.quest.hours.includes(h);
-                return (
-                  <button
-                    key={h}
-                    type="button"
-                    aria-pressed={sel}
-                    onClick={() =>
-                      set("quest", { hours: sel ? d.quest.hours.filter((x) => x !== h) : [...d.quest.hours, h].sort((a, b) => a - b) })
-                    }
-                    className={cn(
-                      "h-7 rounded-md border text-xs tabular-nums transition-colors",
-                      sel ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
-                    )}
-                  >
-                    {h}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </ModeBox>
-
-        <ModeBox
-          title="Forts"
-          on={d.fort.enabled}
-          onToggle={(v) => set("fort", { enabled: v })}
-          workers={d.fort.workers}
-          onWorkers={(v) => set("fort", { workers: v })}
-        >
-          <Check2 label="Prioritise raids" on={d.fort.prioRaid} onChange={(v) => set("fort", { prioRaid: v })} />
-          <Check2 label="Showcase" on={d.fort.showcase} onChange={(v) => set("fort", { showcase: v })} />
-          <Check2 label="Invasions" on={d.fort.invasion} onChange={(v) => set("fort", { invasion: v })} />
-        </ModeBox>
-
-        <ModeBox
-          title="Rare Pokémon"
-          on={d.rare.enabled}
-          onToggle={(v) => set("rare", { enabled: v })}
-          workers={d.rare.workers}
-          onWorkers={(v) => set("rare", { workers: v })}
-        >
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Per 10,000</span>
-            <Input
-              type="number"
-              min={0}
-              max={10000}
-              value={d.rare.permyriad}
-              onChange={(e) => set("rare", { permyriad: Math.max(0, Math.min(10000, Math.round(Number(e.target.value) || 0))) })}
-              className="h-8 w-24"
-            />
-          </label>
-        </ModeBox>
-
-        <p className="text-xs text-muted-foreground">
-          Routes and geofences are not edited here. To enable or disable the area, use the switch in the table.
-        </p>
-        {m.error ? <p className="text-sm text-red-300">{(m.error as Error).message}</p> : null}
-      </div>
-    </Modal>
-  );
-}
-
-function ModeBox({
-  title,
-  on,
-  onToggle,
-  workers,
-  onWorkers,
-  children,
-}: {
-  title: string;
-  on: boolean;
-  onToggle: (v: boolean) => void;
-  workers: number;
-  onWorkers: (v: number) => void;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className={cn("flex flex-col gap-3 rounded-lg border p-4 transition-opacity", !on && "opacity-70")}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <Switch on={on} onChange={onToggle} label={`${title}: ${on ? "disable" : "enable"}`} />
-          <span className="text-sm font-semibold">{title}</span>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Workers</span>
-          <Input
-            type="number"
-            min={0}
-            max={500}
-            value={workers}
-            onChange={(e) => onWorkers(Math.max(0, Math.min(500, Math.round(Number(e.target.value) || 0))))}
-            className="h-8 w-20"
-          />
-        </label>
-      </div>
-      {children ? <div className="flex flex-wrap items-center gap-x-5 gap-y-2">{children}</div> : null}
-    </div>
-  );
-}
-
-function Check2({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 text-sm">
-      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-[var(--primary)]" />
-      {label}
-    </label>
   );
 }
 

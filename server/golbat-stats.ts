@@ -24,7 +24,7 @@ function polygons(g: Geometry) {
 }
 
 /** Whether a point lies inside a Polygon or MultiPolygon (holes excluded). */
-function inside(lat: number, lon: number, g: Geometry) {
+export function inside(lat: number, lon: number, g: Geometry) {
   const inRing = (ring: number[][]) => {
     let hit = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -37,7 +37,7 @@ function inside(lat: number, lon: number, g: Geometry) {
   return polygons(g).some(([outer, ...holes]) => inRing(outer) && !holes.some(inRing));
 }
 
-function bbox(g: Geometry) {
+export function bbox(g: Geometry) {
   let minLat = Infinity;
   let minLon = Infinity;
   let maxLat = -Infinity;
@@ -159,6 +159,26 @@ export async function limited<T, R>(items: T[], n: number, fn: (t: T) => Promise
     }),
   );
   return out;
+}
+
+/**
+ * The area's spawnpoints Golbat knows of right now: Golbat's API lists no
+ * spawnpoints, so they come from the Pokémon active in the area (each one
+ * names its spawnpoint). Ones with no Pokémon at the moment are missing.
+ */
+export async function areaSpawnpoints(golbat: Golbat, geometry: Geometry, timeoutMs: number) {
+  const mons = await post<{ pokemon: { lat: number; lon: number; spawn_id?: number | null; expire_timestamp_verified?: boolean }[]; limit_reached?: boolean }>(
+    golbat,
+    "/api/pokemon/v3/scan",
+    { ...bbox(geometry), limit: NO_LIMIT, filters: [{}] },
+    timeoutMs,
+  );
+  const seen = new Map<number, { lat: number; lon: number; verified: boolean }>();
+  for (const p of mons.pokemon ?? []) {
+    if (!p.spawn_id || seen.has(p.spawn_id) || !inside(p.lat, p.lon, geometry)) continue;
+    seen.set(p.spawn_id, { lat: p.lat, lon: p.lon, verified: !!p.expire_timestamp_verified });
+  }
+  return { points: [...seen.values()], partial: !!mons.limit_reached };
 }
 
 export type { AreaStats };

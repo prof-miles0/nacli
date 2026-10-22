@@ -56,7 +56,6 @@ import { runPanel, vmScalars } from "./vmpanels.ts";
 import { LOCAL_GOLBAT, LocalMetrics, localRotom } from "./local-metrics.ts";
 import {
   ACCOUNT_SORTS,
-  type AreaPatch,
   accountLevelStats,
   accountList,
   accountStats,
@@ -66,6 +65,9 @@ import {
   areaGeofences,
   clearScoutQueue,
   createArea,
+  questAction,
+  getArea,
+  saveArea,
   createMode,
   deleteMode,
   dragoniteAreas as dragoniteAreaList,
@@ -97,9 +99,8 @@ import {
   setAreaEnabled,
   setProxyEnabled,
   transferArea,
-  updateArea,
 } from "./dragonite-api.ts";
-import { areaStats, limited, sumStats } from "./golbat-stats.ts";
+import { areaSpawnpoints, areaStats, limited, sumStats } from "./golbat-stats.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
 
@@ -786,47 +787,6 @@ app.get("/api/dragonite-accounts", async (c) => {
   }
 });
 
-/** Checks an area patch from the browser; returns an error message or the clean patch. */
-function parseAreaPatch(raw: unknown): AreaPatch | string {
-  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const out: AreaPatch = {};
-  const int = (v: unknown, max: number, what: string) => {
-    if (v === undefined) return undefined;
-    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > max) throw new Error(`${what}: integer from 0 to ${max}`);
-    return v;
-  };
-  const bool = (v: unknown, what: string) => {
-    if (v === undefined) return undefined;
-    if (typeof v !== "boolean") throw new Error(`${what}: yes or no`);
-    return v;
-  };
-  const mode = (k: string) => (o[k] && typeof o[k] === "object" ? (o[k] as Record<string, unknown>) : undefined);
-  try {
-    if (o.name !== undefined) {
-      if (typeof o.name !== "string" || !o.name.trim() || o.name.length > 64) throw new Error("name: 1–64 characters");
-      out.name = o.name.trim();
-    }
-    const pk = mode("pokemon");
-    if (pk) out.pokemon = { enabled: bool(pk.enabled, "Pokémon"), workers: int(pk.workers, 500, "Pokémon workers"), scout: bool(pk.scout, "scout"), invasion: bool(pk.invasion, "invasions") };
-    const qm = mode("quest");
-    if (qm) {
-      let hours: number[] | undefined;
-      if (qm.hours !== undefined) {
-        if (!Array.isArray(qm.hours) || qm.hours.some((h) => !Number.isInteger(h) || h < 0 || h > 23)) throw new Error("quest hours: 0–23");
-        hours = [...new Set(qm.hours as number[])].sort((a, b) => a - b);
-      }
-      out.quest = { enabled: bool(qm.enabled, "quests"), workers: int(qm.workers, 500, "quest workers"), hours };
-    }
-    const fm = mode("fort");
-    if (fm) out.fort = { enabled: bool(fm.enabled, "forts"), workers: int(fm.workers, 500, "fort workers"), prioRaid: bool(fm.prioRaid, "raid priority"), showcase: bool(fm.showcase, "showcase"), invasion: bool(fm.invasion, "fort invasions") };
-    const rm = mode("rare");
-    if (rm) out.rare = { enabled: bool(rm.enabled, "rares"), workers: int(rm.workers, 500, "rare workers"), permyriad: int(rm.permyriad, 10_000, "rares per 10 000") };
-  } catch (e) {
-    return (e as Error).message;
-  }
-  return out;
-}
-
 const areaId = (raw: string) => (/^\d{1,9}$/.test(raw) ? Number(raw) : undefined);
 
 app.post("/api/dragonite/:id/areas/:area/:action{enable|disable}", async (c) => {
@@ -839,23 +799,6 @@ app.post("/api/dragonite/:id/areas/:area/:action{enable|disable}", async (c) => 
     vmCache.delete(`dragonite-geofences:${d.id}`);
     console.log(`[dragonite] ${c.get("user")} ${c.req.param("action") === "enable" ? "enables" : "disables"} area ${id} of ${d.name}`);
     return c.json({ ok: true });
-  } catch (e) {
-    return c.json({ error: (e as Error).message }, 502);
-  }
-});
-
-app.patch("/api/dragonite/:id/areas/:area", async (c) => {
-  const d = dragoniteWithApi(c.req.param("id"));
-  const id = areaId(c.req.param("area"));
-  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
-  const patch = parseAreaPatch(await c.req.json().catch(() => ({})));
-  if (typeof patch === "string") return c.json({ error: patch }, 400);
-  try {
-    const area = await updateArea(d, id, patch, cfg.requestTimeoutMs);
-    vmCache.delete(`dragonite-areas:${d.id}`);
-    vmCache.delete(`dragonite-geofences:${d.id}`);
-    console.log(`[dragonite] ${c.get("user")} edits area ${id} (${area.name}) of ${d.name}: ${JSON.stringify(patch)}`);
-    return c.json(area);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
@@ -905,6 +848,102 @@ app.post("/api/dragonite-areas/create", async (c) => {
       results.map((r) => `${r.stack} ${r.error ? `failed (${r.error})` : `id ${r.id}${r.enabled ? ", enabled" : ""}`}`).join("; "),
   );
   return c.json({ results });
+});
+
+/** One area in full (geofence, routes, overrides, modes), for its View and Edit. */
+app.get("/api/dragonite/:id/areas/:area/full", async (c) => {
+  const d = dragoniteWithApi(c.req.param("id"));
+  const id = areaId(c.req.param("area"));
+  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
+  try {
+    return c.json(await getArea(d, id, cfg.requestTimeoutMs));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/**
+ * The area's spawnpoints from Golbat (only with [golbat] url): the ones with
+ * a Pokémon right now, as its API lists no spawnpoints. Shared for a minute.
+ */
+app.get("/api/dragonite/:id/areas/:area/spawnpoints", async (c) => {
+  const golbat = cfg.golbat?.api;
+  if (!golbat) return c.json({ error: "requires url in [golbat]" }, 404);
+  const d = dragoniteWithApi(c.req.param("id"));
+  const id = areaId(c.req.param("area"));
+  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
+  try {
+    const data = await cachedVm(`golbat:spawnpoints:${d.id}:${id}`, 60_000 * 240, async () => {
+      const area = await getArea(d, id, cfg.requestTimeoutMs);
+      const g = area.geofence as { type?: string; geometry?: unknown } | undefined;
+      const geometry = (g?.type === "Feature" ? g.geometry : g) as { type: "Polygon" | "MultiPolygon"; coordinates: unknown } | undefined;
+      if (!geometry || (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")) return { points: [], partial: false };
+      return areaSpawnpoints(golbat, geometry, 30_000);
+    });
+    return c.json(data);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/** Saves a whole area, as the admin's Edit (and switches it on or off when `enabled` changes). */
+app.put("/api/dragonite/:id/areas/:area/full", async (c) => {
+  const d = dragoniteWithApi(c.req.param("id"));
+  const id = areaId(c.req.param("area"));
+  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
+  const raw = await c.req.text();
+  if (raw.length > 5_000_000) return c.json({ error: "area too large" }, 413);
+  let area: Record<string, unknown>;
+  try {
+    area = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return c.json({ error: "invalid JSON" }, 400);
+  }
+  if (!area || typeof area !== "object" || Array.isArray(area)) return c.json({ error: "missing area" }, 400);
+  const name = typeof area.name === "string" ? area.name.trim() : "";
+  if (!name || name.length > 128) return c.json({ error: "the area needs a name (up to 128 characters)" }, 400);
+  if (!area.geofence) return c.json({ error: "the area needs a geofence" }, 400);
+  try {
+    const before = await getArea(d, id, cfg.requestTimeoutMs);
+    await saveArea(d, id, { ...area, name }, cfg.requestTimeoutMs);
+    const steps = ["saved"];
+    if (typeof area.enabled === "boolean" && area.enabled !== !!before.enabled) {
+      await setAreaEnabled(d, id, area.enabled, cfg.requestTimeoutMs);
+      steps.push(area.enabled ? "enabled" : "disabled");
+    }
+    vmCache.delete(`dragonite-areas:${d.id}`);
+    vmCache.delete(`dragonite-geofences:${d.id}`);
+    console.log(`[dragonite] ${c.get("user")} edits area ${id} ("${name}") of ${d.name}: ${steps.join(", ")}`);
+    return c.json({ ok: true, steps });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/**
+ * Start or stop quest scanning, as the admin's quest buttons: in one area
+ * (body { area }) or in every active area of the stack (no area).
+ */
+app.post("/api/dragonite/:id/quests/:action{start|stop}", async (c) => {
+  const d = dragoniteWithApi(c.req.param("id"));
+  if (!d) return c.json({ error: "unknown stack" }, 404);
+  const action = c.req.param("action") as "start" | "stop";
+  const b = (await c.req.json().catch(() => ({}))) as { area?: unknown; clear?: unknown };
+  const area = b.area === undefined ? "all" : areaId(String(b.area));
+  if (area === undefined) return c.json({ error: "invalid area" }, 400);
+  // Dragonite clears the stored quests unless told not to.
+  const clear = b.clear !== false;
+  try {
+    const r = await questAction(d, area, action, clear, cfg.requestTimeoutMs);
+    vmCache.delete(`dragonite-areas:${d.id}`);
+    console.log(
+      `[dragonite] ${c.get("user")} ${action}s quests in ${area === "all" ? "every active area" : `area ${area}`} of ${d.name}` +
+        `${action === "start" ? (clear ? " (clearing quests)" : " (keeping quests)") : ""}: ${r.message || "ok"}`,
+    );
+    return c.json(r);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
 });
 
 app.post("/api/dragonite/:id/areas/:area/transfer", async (c) => {

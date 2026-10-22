@@ -133,6 +133,16 @@ export const endpoints = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  questAction: (id: string, action: "start" | "stop", body: { area?: number; clear: boolean }) =>
+    api<{ message: string; areas: Record<string, boolean>; errors: Record<string, string> }>(
+      `/dragonite/${encodeURIComponent(id)}/quests/${action}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  areaFull: (id: string, area: number) => api<Record<string, unknown>>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`),
+  areaSpawnpoints: (id: string, area: number) =>
+    api<{ points: { lat: number; lon: number; verified: boolean }[]; partial: boolean }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/spawnpoints`),
+  saveAreaFull: (id: string, area: number, body: Record<string, unknown>) =>
+    api<{ ok: true; steps: string[] }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`, { method: "PUT", body: JSON.stringify(body) }),
   transferArea: (id: string, area: number, body: { to: string; name: string; mode: "copy" | "move"; enable: boolean }) =>
     api<{ id: number; steps: string[] }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/transfer`, {
       method: "POST",
@@ -181,8 +191,6 @@ export const endpoints = {
     reload: (id: string) => api<{ ok: true }>(`/dragonite/${encodeURIComponent(id)}/reload`, { method: "POST" }),
   },
   clearScoutQueue: (id: string) => api<{ ok: true }>(`/dragonite/${encodeURIComponent(id)}/scout/clear`, { method: "POST" }),
-  updateArea: (id: string, area: number, patch: Record<string, unknown>) =>
-    api<DragoniteArea>(`/dragonite/${encodeURIComponent(id)}/areas/${area}`, { method: "PATCH", body: JSON.stringify(patch) }),
   accountStats: (id: string) => api<AccountCounts>(`/dragonite/${encodeURIComponent(id)}/accounts/stats`),
   accountLevelStats: (id: string) =>
     api<AccountLevelCounts[]>(`/dragonite/${encodeURIComponent(id)}/accounts/level-stats`),

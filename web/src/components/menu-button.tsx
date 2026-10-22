@@ -11,6 +11,8 @@ export interface MenuItem {
   hint?: string;
   icon: LucideIcon;
   danger?: boolean;
+  /** Green, for an option that starts something (danger is red). */
+  positive?: boolean;
   disabled?: boolean;
   onSelect: () => void;
 }
@@ -81,13 +83,14 @@ export function MenuButton({ kind, subject, items }: { kind: string; subject: st
                   className={cn(
                     "flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0",
                     a.danger && "text-red-400",
+                    a.positive && "text-green-400",
                   )}
                   onClick={() => {
                     setOpen(false);
                     a.onSelect();
                   }}
                 >
-                  <a.icon className={a.danger ? "text-red-400" : "text-muted-foreground"} />
+                  <a.icon className={a.danger ? "text-red-400" : a.positive ? "text-green-400" : "text-muted-foreground"} />
                   <span className="min-w-0">
                     <span className="block">{a.label}</span>
                     {a.hint ? <span className="block text-[11px] text-muted-foreground">{a.hint}</span> : null}
