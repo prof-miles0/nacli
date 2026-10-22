@@ -12,7 +12,7 @@ proxies, modes and schedules without jumping between admins.
 [![Docker image](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml/badge.svg)](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml)
 [![ghcr.io](https://img.shields.io/badge/ghcr.io-prof--miles0%2Fnacli-2496ED?logo=docker&logoColor=white)](https://github.com/prof-miles0/nacli/pkgs/container/nacli)
 ![Platforms](https://img.shields.io/badge/platforms-amd64%20%7C%20arm64-lightgrey)
-![Node](https://img.shields.io/badge/node-%E2%89%A520.19-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-%E2%89%A524-339933?logo=node.js&logoColor=white)
 
 </div>
 
@@ -214,7 +214,7 @@ See [`config.example.toml`](config.example.toml) for a commented example of ever
 
 ## 🛠️ Running from source
 
-Requires Node.js 20.19 or newer.
+Requires Node.js 24 or newer (`.nvmrc` pins it for nvm).
 
 ```bash
 cp config.example.toml config.toml   # then edit it

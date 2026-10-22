@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build on Debian (glibc), where every native build tool has a binary.
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci
@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build
 
 # Run on Alpine with production dependencies only.
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production CONFIG=/app/config/config.toml
 COPY package.json package-lock.json .npmrc ./
