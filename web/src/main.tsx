@@ -16,6 +16,7 @@ import { DragoniteProxiesPage } from "@/pages/dragonite-proxies";
 import { DragoniteSchedulerPage } from "@/pages/dragonite-scheduler";
 import { DragoniteMetricsPage } from "@/pages/dragonite-metrics";
 import { GolbatMetricsPage } from "@/pages/golbat-metrics";
+import { GolbatStatsPage } from "@/pages/golbat-stats";
 import { InstancesPage } from "@/pages/instances";
 import { JobsPage } from "@/pages/jobs";
 import { StatusPage } from "@/pages/status";
@@ -40,6 +41,7 @@ function Only({ when, children }: { when: (app: AppInfo) => boolean; children: R
 }
 const rotom = (a: AppInfo) => a.instances.length > 0;
 const golbat = (a: AppInfo) => a.golbat;
+const golbatStats = (a: AppInfo) => a.golbatStats;
 const dragonite = (a: AppInfo) => a.dragonite.length > 0;
 
 createRoot(document.getElementById("root")!).render(
@@ -62,6 +64,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/dragonite/proxies" element={<Only when={dragonite}><DragoniteProxiesPage /></Only>} />
                 <Route path="/dragonite/scheduler" element={<Only when={dragonite}><DragoniteSchedulerPage /></Only>} />
                 <Route path="/dragonite/accounts" element={<Only when={dragonite}><DragoniteAccountsPage /></Only>} />
+                <Route path="/golbat/stats" element={<Only when={golbatStats}><GolbatStatsPage /></Only>} />
                 <Route path="/golbat/metrics" element={<Only when={golbat}><GolbatMetricsPage /></Only>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

@@ -12,6 +12,8 @@ import type {
   DragoniteRateEvent,
   DragoniteStatus,
   StackGeofences,
+  AreaStats,
+  AreaStatsResponse,
   SystemStatus,
   ProxyEntry,
   ProxyImportResult,
@@ -97,6 +99,7 @@ import {
   transferArea,
   updateArea,
 } from "./dragonite-api.ts";
+import { areaStats, limited, sumStats } from "./golbat-stats.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
 
@@ -291,6 +294,7 @@ app.get("/api/app", async (c) => {
       return all ? { source: all.source === "vm" ? "victoriametrics" : "memory", maxRangeMs: all.maxRangeMs } : undefined;
     })(),
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
+    golbatStats: !!cfg.golbat?.api && cfg.dragonite.some((d) => d.api),
     instances: registry.list(),
   });
 });
@@ -1794,6 +1798,41 @@ async function mapDevices(golbat: { url: string; headers: Record<string, string>
     });
   return out;
 }
+
+/**
+ * Golbat's figures for every enabled area of every stack (quests, Pokémon,
+ * invasions, raids, lures, stations). Heavy (Golbat lists every Pokémon in
+ * each area), so computed only when asked and shared for two minutes.
+ */
+app.get("/api/golbat/area-stats", async (c) => {
+  const golbat = cfg.golbat?.api;
+  const stacks = cfg.dragonite.filter((d) => d.api);
+  if (!golbat || !stacks.length) return c.json({ error: "requires url in [golbat] and a [stack.dragonite] with url" }, 404);
+  try {
+    const data = await cachedVm("golbat:area-stats", 2 * 60_000 * 240, async (): Promise<AreaStatsResponse> => {
+      const perStack = await Promise.all(
+        stacks.map(async (d) => {
+          const areas = await cachedVm(`dragonite-geofences:${d.id}`, 240 * 60_000, () => areaGeofences(d, cfg.requestTimeoutMs));
+          return areas.map((a) => ({ d, a }));
+        }),
+      );
+      const list = perStack.flat();
+      const areas = await limited(list, 3, async ({ d, a }): Promise<AreaStats> => {
+        const base = { stack: d.id, stackName: d.name, rotom: d.rotom, areaId: a.id, area: a.name };
+        try {
+          const { partial, ...stats } = await areaStats(golbat, a.geometry, 30_000);
+          return { ...base, stats, partial };
+        } catch (e) {
+          return { ...base, error: (e as Error).message };
+        }
+      });
+      return { checkedAt: Date.now(), areas, totals: sumStats(areas.flatMap((x) => (x.stats ? [x.stats] : []))) };
+    });
+    return c.json(data);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
 
 app.get("/api/golbat/devices", async (c) => {
   const golbat = cfg.golbat?.api;

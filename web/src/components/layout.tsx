@@ -1,5 +1,6 @@
 import {
   CalendarClock,
+  ChartColumnBig,
   HeartPulse,
   Shapes,
   BriefcaseBusiness,
@@ -16,6 +17,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router";
 import { useQuery } from "@tanstack/react-query";
+import type { AppInfo } from "@shared/types";
 import { endpoints } from "@/lib/api";
 import { isUp, linkState } from "@/lib/dragonite";
 import { useAppInfo } from "@/lib/state";
@@ -30,7 +32,11 @@ import { Button, HoverCard } from "./ui";
 const MD = 768;
 const SIDEBAR_KEY = "nacli.sidebar";
 
-const NAV: { group: string; items: { to: string; label: string; icon: typeof LayoutDashboard }[] }[] = [
+const NAV: {
+  group: string;
+  /** An item with `when` only shows when config.toml enables what it needs. */
+  items: { to: string; label: string; icon: typeof LayoutDashboard; when?: (app: AppInfo) => boolean }[];
+}[] = [
   {
     group: "", // no heading: Dashboard sits at the top on its own
     items: [
@@ -61,7 +67,10 @@ const NAV: { group: string; items: { to: string; label: string; icon: typeof Lay
   },
   {
     group: "Golbat",
-    items: [{ to: "/golbat/metrics", label: "Metrics", icon: ChartLine }],
+    items: [
+      { to: "/golbat/stats", label: "Statistics", icon: ChartColumnBig, when: (a) => a.golbatStats },
+      { to: "/golbat/metrics", label: "Metrics", icon: ChartLine, when: (a) => a.golbat },
+    ],
   },
 ];
 
@@ -211,12 +220,14 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       <nav className="flex flex-1 flex-col gap-2 overflow-y-auto">
         {/* Golbat, Dragonite and Rotom sections only exist when config.toml has [golbat] / [stack.dragonite] / [stack.rotom]. */}
-        {NAV.filter(
-          (g) =>
-            (g.group !== "Golbat" || app?.golbat) &&
-            (g.group !== "Dragonite" || app?.dragonite.length) &&
-            (g.group !== "Rotom" || app?.instances.length),
-        ).map((g, i) => (
+        {NAV.map((g) => ({ ...g, items: g.items.filter((it) => !it.when || (app && it.when(app))) }))
+          .filter(
+            (g) =>
+              g.items.length > 0 &&
+              (g.group !== "Dragonite" || app?.dragonite.length) &&
+              (g.group !== "Rotom" || app?.instances.length),
+          )
+          .map((g, i) => (
           // A thin line between sections (none above the first, the Dashboard).
           <div key={g.group} className="relative flex flex-col gap-1 not-first:mt-1 not-first:pt-2">
             {/* Inset from the sides, a little stronger than the sidebar's own border. */}

@@ -212,6 +212,8 @@ export interface AppInfo {
   dragoniteHistory?: { source: "victoriametrics" | "memory"; maxRangeMs: number };
   /** How far back Golbat's charts go (VictoriaMetrics or memory). */
   golbatHistoryMs?: number;
+  /** Golbat's API and a Dragonite API are configured: per-area statistics. */
+  golbatStats: boolean;
   instances: InstanceInfo[];
 }
 
@@ -430,6 +432,36 @@ export interface DragoniteAreas {
   /** Modes not tied to an area (e.g. Rocket invasions). */
   unbounds: (DragoniteLiveGroup & { name: string })[];
   queues: { name: string; size: number }[];
+}
+
+/** What Golbat sees in one area right now. */
+export interface AreaStatsCounts {
+  /** As Dragonite's admin dashboard counts them: stops with an AR / non-AR quest, of all stops. */
+  quests: { ar: number; noAr: number; stops: number };
+  pokemon: { active: number; withIv: number; hundo: number; shiny: number };
+  invasions: { grunts: number; leaders: number; giovanni: number; decoys: number; golden: number; kecleon: number };
+  stops: { total: number; lures: number };
+  gyms: { total: number; raids: number; eggs: number };
+  stations: { active: number; battles: number };
+}
+
+/** One Dragonite area's statistics from Golbat, or why they are missing. */
+export interface AreaStats {
+  stack: string;
+  stackName: string;
+  rotom?: string;
+  areaId: number;
+  area: string;
+  stats?: AreaStatsCounts;
+  /** Golbat cut a list at its result limit: the counts are a lower bound. */
+  partial?: boolean;
+  error?: string;
+}
+
+export interface AreaStatsResponse {
+  checkedAt: number;
+  areas: AreaStats[];
+  totals: AreaStatsCounts;
 }
 
 /** An enabled area's outline, for the Dashboard map. */

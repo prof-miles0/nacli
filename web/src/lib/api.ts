@@ -1,4 +1,5 @@
 import type {
+  AreaStatsResponse,
   AccountImportResult,
   AccountOwner,
   AccountCounts,
@@ -98,6 +99,7 @@ export const endpoints = {
   },
   golbatSummary: () => api<GolbatSummary>("/golbat/summary"),
   golbatDevices: () => api<MapDevice[]>("/golbat/devices"),
+  golbatAreaStats: () => api<AreaStatsResponse>("/golbat/area-stats"),
   golbatTrail: (instance: string, controller: string) =>
     api<MapTrailPoint[]>(`/golbat/trail?${new URLSearchParams({ instance, controller })}`),
   dragoniteMeta: () => api<DragoniteMeta>("/dragonite/meta"),
