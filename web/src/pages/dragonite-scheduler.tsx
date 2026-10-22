@@ -341,14 +341,18 @@ function SchedulesView({
       subject={s.name}
       items={[
         { key: "edit", label: "Edit", hint: "Timing, targets and actions", icon: Pencil, onSelect: () => setEditing(s) },
-        {
-          key: "copy",
-          label: "Copy to another stack",
-          hint: others.length ? "With the groups it uses; starts disabled" : "No other stack with an API",
-          icon: Copy,
-          disabled: !others.length,
-          onSelect: () => setCopying(s),
-        },
+        // Only with another stack to copy it to.
+        ...(others.length
+          ? [
+              {
+                key: "copy",
+                label: "Copy to another stack",
+                hint: "With the groups it uses; starts disabled",
+                icon: Copy,
+                onSelect: () => setCopying(s),
+              },
+            ]
+          : []),
         { key: "runs", label: "View runs", hint: "Its history in the run ledger", icon: History, onSelect: () => onRuns(s.id) },
         {
           key: "delete",

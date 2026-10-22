@@ -196,14 +196,18 @@ function StackModes({
       subject={m.name}
       items={[
         { key: "edit", label: "Edit", hint: m.type === "level" ? "Name, workers and route" : "Name and workers", icon: Pencil, onSelect: () => setEditing(m) },
-        {
-          key: "copy",
-          label: "Copy to another stack",
-          hint: others.length ? (m.type === "level" ? "With its route" : "Same name and workers") : "No other stack with an API",
-          icon: Copy,
-          disabled: !others.length,
-          onSelect: () => setCopying(m),
-        },
+        // Only with another stack to copy it to.
+        ...(others.length
+          ? [
+              {
+                key: "copy",
+                label: "Copy to another stack",
+                hint: m.type === "level" ? "With its route" : "Same name and workers",
+                icon: Copy,
+                onSelect: () => setCopying(m),
+              },
+            ]
+          : []),
         { key: "delete", label: "Delete", hint: "Removes it from this Dragonite", icon: Trash2, danger: true, onSelect: () => setDeleting(m) },
       ]}
     />
