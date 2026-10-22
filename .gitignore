@@ -11,5 +11,6 @@ compose.yml
 # Local data and editor/tooling files
 data/
 .claude/
+.codegraph/
 .DS_Store
 *.log
