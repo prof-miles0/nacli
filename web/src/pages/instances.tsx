@@ -27,7 +27,8 @@ export function InstancesPage() {
   if (isLoading) return <Spinner className="mx-auto mt-20" />;
 
   return (
-    <div className="animate-in flex flex-col gap-5">
+    // Two columns on very wide screens; each card lays itself out by its own width.
+    <div className={cn("animate-in grid items-start gap-5", visible.length > 1 && "2xl:grid-cols-2")}>
       {visible.map((i) => (
         <AccentCard
           key={i.id}
@@ -154,7 +155,7 @@ function InstanceCard({ i, accent, history }: { i: InstanceInfo; accent: string;
     }));
 
   return (
-    <div className="flex flex-col gap-5 p-5">
+    <div className="@container flex flex-col gap-5 p-5">
       {/* Header: name and pills share one centred row. The URL is never shown: it is often an internal address. */}
       <div className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -205,7 +206,7 @@ function InstanceCard({ i, accent, history }: { i: InstanceInfo; accent: string;
       {s || p ? (
         <>
           {/* Live state */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 @xl:grid-cols-3 @4xl:grid-cols-6">
             <Tile
               icon={Cpu}
               label="Workers"
@@ -247,7 +248,7 @@ function InstanceCard({ i, accent, history }: { i: InstanceInfo; accent: string;
           </div>
 
           {/* Details: each panel collapsed by default */}
-          <div className="grid items-start gap-3 lg:grid-cols-3">
+          <div className="grid items-start gap-3 @4xl:grid-cols-3">
             <Panel
               title="Process"
               summary={`${fmt.duration(uptime)} up · ${fmt.bytes(p?.residentBytes)}`}

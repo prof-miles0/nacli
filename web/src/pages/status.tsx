@@ -451,11 +451,10 @@ function RotomCard({ i, color, v, releases }: { i: InstanceInfo; color: string; 
 function GolbatCard({ g }: { g: NonNullable<SystemStatus["golbat"]> }) {
   const fresh = g.lastSeenS != null && g.lastSeenS < 120;
   return (
-    <Card className="flex-1 gap-1 p-4">
-      <h3 className="mb-1 font-semibold">Golbat</h3>
+    <Card className="gap-1 p-4">
       <div className="flex flex-col divide-y divide-border/60">
         {g.api ? (
-          <Row label="API" level={g.apiOk ? "ok" : "error"} value={g.apiOk ? "Answering" : "Not answering"} detail={g.apiOk ? undefined : g.apiError} />
+          <Row label="API" level={g.apiOk ? "ok" : "error"} value={g.apiOk ? <span className="text-green-400">Answering</span> : "Not answering"} detail={g.apiOk ? undefined : g.apiError} />
         ) : null}
         {g.metrics ? (
           <>
@@ -480,34 +479,52 @@ function GolbatCard({ g }: { g: NonNullable<SystemStatus["golbat"]> }) {
 
 const KIND_LABEL = { rotom: "Rotom", dragonite: "Dragonite", golbat: "Golbat" } as const;
 
-/** Zapdos (its VictoriaMetrics): whether it answers, and which instances' charts it holds. */
+/**
+ * Zapdos (its VictoriaMetrics): whether it answers, and which instances' charts
+ * it holds. Full width: its health, then a column per kind of instance.
+ */
 function ZapdosCard({ z }: { z: SystemStatus["zapdos"] }) {
   const ok = !!z.health?.ok;
+  const groups = (["rotom", "dragonite", "golbat"] as const)
+    .map((kind) => [kind, z.instances.filter((x) => x.kind === kind)] as const)
+    .filter(([, list]) => list.length);
   return (
-    <Card className="flex-1 gap-1 p-4">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <h3 className="font-semibold">Zapdos</h3>
-        <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap", ok ? "text-green-400" : "text-red-400")}>
-          <span className={cn("size-2 rounded-full", ok ? "bg-green-500" : "bg-red-500")} />
-          {ok ? `online · ${z.health?.latencyMs} ms` : "offline"}
-        </span>
-      </div>
-      <div className="flex flex-col divide-y divide-border/60">
+    <Card className="gap-1 p-4">
+      <div className="flex flex-col gap-3">
         <Row
           label="VictoriaMetrics"
           level={ok ? "ok" : "error"}
-          value={ok ? "Healthy" : "Not answering"}
+          value={
+            ok ? (
+              <span className="text-green-400">Healthy · {z.health?.latencyMs} ms</span>
+            ) : (
+              "Not answering"
+            )
+          }
           detail={ok ? undefined : z.health?.error}
         />
-        {z.instances.map((x) => (
-          <Row
-            key={`${x.kind}:${x.zapdosInstance}`}
-            label={x.kind === "golbat" ? "Golbat" : `${KIND_LABEL[x.kind]} ${x.name}`}
-            level={x.hasData === undefined ? "off" : x.hasData ? "ok" : "warn"}
-            value={x.hasData === undefined ? "Checking…" : x.hasData ? "Data" : "No data"}
-            detail={x.hasData === false ? `Nothing as “${x.zapdosInstance}” for 1 h · charts from memory` : undefined}
-          />
-        ))}
+        {/* Its data, one column per kind of instance. */}
+        {groups.length ? (
+          // Separated by lines: across on phones, down between columns on wider screens.
+          <div className="flex flex-col divide-y divide-border/60 border-t border-border/60 md:flex-row md:divide-x md:divide-y-0">
+            {groups.map(([kind, list]) => (
+              <div key={kind} className="flex min-w-0 flex-1 flex-col py-3 md:px-5 md:first:pl-0 md:last:pr-0">
+                <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{KIND_LABEL[kind]}</span>
+                <div className="flex flex-col divide-y divide-border/60">
+                  {list.map((x) => (
+                    <Row
+                      key={x.zapdosInstance}
+                      label={kind === "golbat" ? x.zapdosInstance : x.name}
+                      level={x.hasData === undefined ? "off" : x.hasData ? "ok" : "warn"}
+                      value={x.hasData === undefined ? "Checking…" : x.hasData ? "Data" : "No data"}
+                      detail={x.hasData === false ? <span title={`Nothing as “${x.zapdosInstance}” in the last hour`}>Charts from memory</span> : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </Card>
   );
@@ -545,22 +562,19 @@ export function StatusPage() {
           </div>
         </>
       ) : null}
-      {/* Golbat and Zapdos side by side when there is room. */}
-      {data.golbat || data.zapdos.configured ? (
-        <div className="grid gap-x-3 gap-y-4 md:grid-cols-2">
-          {data.golbat ? (
-            <div className="flex flex-col gap-4">
-              <SectionTitle>Golbat</SectionTitle>
-              <GolbatCard g={data.golbat} />
-            </div>
-          ) : null}
-          {data.zapdos.configured ? (
-            <div className="flex flex-col gap-4">
-              <SectionTitle>Zapdos</SectionTitle>
-              <ZapdosCard z={data.zapdos} />
-            </div>
-          ) : null}
-        </div>
+      {data.golbat ? (
+        <>
+          <SectionTitle>Golbat</SectionTitle>
+          <div className="grid gap-3 md:grid-cols-2">
+            <GolbatCard g={data.golbat} />
+          </div>
+        </>
+      ) : null}
+      {data.zapdos.configured ? (
+        <>
+          <SectionTitle>Zapdos</SectionTitle>
+          <ZapdosCard z={data.zapdos} />
+        </>
       ) : null}
       <p className="text-[11px] text-muted-foreground">
         Checked {fmt.ago(data.checkedAt)} · updates every 15 s · Dragonite and RotomNG releases from GitHub{data.releases?.checkedAt ? `, checked ${fmt.ago(data.releases.checkedAt)}` : ""}. Rate-limit

@@ -206,6 +206,15 @@ export function GolbatStatsPage() {
   const { data: app } = useAppInfo();
   // The area the history shows ("stack:areaId"); none: every area together.
   const [picked, setPicked] = useState<string>();
+  // The totals' history decides whether the chart shows at all: hidden until it
+  // holds two takes (a line to draw). Same query the chart uses for every area.
+  const history = useQuery({
+    queryKey: ["golbat-area-stats-history", "all"],
+    queryFn: () => endpoints.golbatAreaStatsHistory(),
+    refetchInterval: 60_000,
+    enabled: !!app?.golbatStatsHistoryMs,
+  });
+  const withHistory = (history.data?.points.length ?? 0) >= 2;
   const q = useQuery({ queryKey: ["golbat-area-stats"], queryFn: endpoints.golbatAreaStats, refetchInterval: 120_000 });
   const rows = (q.data?.areas ?? []).filter((a) => matches(search, a.area, a.stackName));
   const multi = new Set((q.data?.areas ?? []).map((a) => a.stack)).size > 1;
@@ -250,7 +259,7 @@ export function GolbatStatsPage() {
         <HeadStat label="Max battles" value={n(t.stations.battles)} hint={`${n(t.stations.active)} active Power Spots`} />
       </div>
 
-      {app?.golbatStatsHistoryMs ? (
+      {withHistory ? (
         <StatsHistory area={q.data.areas.find((a) => `${a.stack}:${a.areaId}` === picked)} multi={multi} onClear={() => setPicked(undefined)} />
       ) : null}
 
@@ -267,7 +276,7 @@ export function GolbatStatsPage() {
             key={`${a.stack}:${a.areaId}`}
             a={a}
             picked={picked === `${a.stack}:${a.areaId}`}
-            onPick={app?.golbatStatsHistoryMs ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
+            onPick={withHistory ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
           />
         ))}
       </div>
@@ -289,8 +298,8 @@ export function GolbatStatsPage() {
             {sorted.map((a) => (
               <tr
                 key={`${a.stack}:${a.areaId}`}
-                className={cn(app?.golbatStatsHistoryMs && "cursor-pointer", picked === `${a.stack}:${a.areaId}` && "bg-accent/60")}
-                onClick={app?.golbatStatsHistoryMs ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
+                className={cn(withHistory && "cursor-pointer", picked === `${a.stack}:${a.areaId}` && "bg-accent/60")}
+                onClick={withHistory ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
               >
                 <td>
                   <div className="flex items-center gap-2">
