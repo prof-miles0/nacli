@@ -2,10 +2,11 @@
 #
 #   cp compose.example.yml compose.yml
 #   mkdir config && cp config.example.toml config/config.toml   # then edit it
+#   mkdir data && sudo chown 1000:1000 data                     # Nacli runs as uid 1000
 #   docker compose up -d
 #
 # Then open http://<server>:7080 and sign in with a user from config.toml.
-# Update to the latest image with: docker compose pull && docker compose up -d
+# Update with: docker compose pull && docker compose up -d
 
 services:
   nacli:
@@ -18,16 +19,24 @@ services:
       - "7080:7080"
     volumes:
       # The folder with config.toml, read-only: Nacli never writes to it and
-      # reloads it on every save. Mount the folder, not the file: editors that
-      # save by replacing the file would leave the container with the old one.
+      # picks up every save. Mount the folder, not the file: editors that save
+      # by replacing the file would leave the container with the old one.
       - ./config:/app/config:ro
-      # Where the chart and Statistics histories kept in memory are saved, so
-      # they survive restarts and updates ([server] state_file).
+      # The charts and Statistics kept in memory, saved here so they survive
+      # restarts and updates ([server] state_file).
       - ./data:/app/data
     # environment:
-    #   TZ: Europe/Madrid            # time zone for the server's log lines
+    #   TZ: Europe/Madrid            # time zone of the log lines
+    # Running next to your UnownHash containers? Join their network and use
+    # their container names in config.toml (e.g. http://dragonite:7272).
+    # networks:
+    #   - unown
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+# networks:
+#   unown:
+#     external: true                 # the network your Dragonite, RotomNG… use

@@ -4,10 +4,10 @@
 
 # Nacli
 
-**One dashboard for your Dragonite, RotomNG and Golbat stacks.**
+**A manager for the whole UnownHash stack: Dragonite, RotomNG, Golbat and Zapdos.**
 
-See every stack at a glance, follow your devices on a map, and manage areas, accounts,
-proxies, modes and schedules without jumping between admins.
+Run as many Dragonite + RotomNG pairs as you like and manage all of them from one place:
+areas, accounts, proxies, modes, schedules, devices and their status, side by side.
 
 [![Docker image](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml/badge.svg)](https://github.com/prof-miles0/nacli/actions/workflows/docker.yml)
 [![ghcr.io](https://img.shields.io/badge/ghcr.io-prof--miles0%2Fnacli-2496ED?logo=docker&logoColor=white)](https://github.com/prof-miles0/nacli/pkgs/container/nacli)
@@ -18,75 +18,105 @@ proxies, modes and schedules without jumping between admins.
 
 ---
 
-Nacli sits in front of one or more **stacks** (a [RotomNG](https://github.com/UnownHash/RotomNG)
-and the [Dragonite](https://github.com/UnownHash/Dragonite-Public) that feeds it), plus
-[Golbat](https://github.com/UnownHash/Golbat) and, for the stored charts,
-[Zapdos](https://github.com/UnownHash/Zapdos), and brings them together in a single web app
-with its own login. It looks and feels like the Dragonite admin, works the same on a phone,
-and keeps every secret on the server: the browser only ever talks to Nacli. **Nothing is
-required**: every part is optional, and Nacli shows the pages that what you give it allows.
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Nacli's dashboard: every stack's areas on a map, and the accounts across all stacks" width="900">
+</p>
+
+## What is Nacli?
+
+[UnownHash](https://github.com/UnownHash) is made of several projects, each with its own
+admin or API: [Dragonite](https://github.com/UnownHash/Dragonite-Public) (the scanner),
+[RotomNG](https://github.com/UnownHash/RotomNG) (the devices),
+[Golbat](https://github.com/UnownHash/Golbat) (the data) and
+[Zapdos](https://github.com/UnownHash/Zapdos) (the metrics). Run more than one scanner and you
+also get more than one Dragonite and RotomNG to keep an eye on.
+
+Nacli puts all of it behind **one web app with its own login**. Each **stack** is a Dragonite
+and the RotomNG it uses; add as many as you run, and Golbat and Zapdos are shared by all of
+them. Lists span every stack at once, each stack keeps its colour everywhere, and areas,
+modes, schedules and proxies can be copied from one stack to another.
+
+<p align="center">
+  <img src="docs/stack.svg" alt="Nacli in front of several Dragonite + RotomNG stacks, plus the shared Golbat and Zapdos" width="820">
+</p>
+
+**Nothing is required.** Every part is optional, and Nacli shows the pages that what you give
+it allows: a single RotomNG, a Dragonite on its own, or the whole stack. Secrets never leave
+the server; the browser only ever talks to Nacli.
 
 ## ✨ Features
 
 ### 🗺️ Dashboard
 
-- **Live map** of every device, from Golbat's last known location, coloured by stack and
-  matched to its Rotom device, Dragonite area, mode and controller.
-- **Geofences** of every enabled area, drawn in its stack's colour. Hover to see its name;
-  **click one to show the trails of all the controllers working it**.
-- **Controller trails** for the last 30 minutes, followed per controller (they survive a move
-  to another worker). Jumps of more than 50 km are dropped as bad readings, except for
-  Invasion and Scout controllers, which really do travel far.
+- **One map for every stack**: the areas of every Dragonite, grouped when they are close,
+  and, with Golbat, the devices as you zoom in, with the trail of each controller.
 - Accounts, Dragonite and Rotom overviews, with charts of workers and throughput.
 
 ### 🩺 Status
 
-- Per Dragonite: whether **[Kōji](https://github.com/TurtIeSocks/Koji)** and **Golbat** are connected, its **global rate limit** and
-  why it last dropped, and whether **Dragonite** and **RotomNG** are **up to date** with their
-  latest GitHub releases (all green when they are).
-- The Dragonite admin's controls, per instance: **pause or reset the global rate limit**,
-  **reload proxies**, **reload accounts** and **reload Dragonite**.
-- **Golbat** and **Zapdos** side by side: whether Golbat's API and metrics answer, and whether
-  Zapdos' VictoriaMetrics is healthy and has data for each instance.
-- An **alerts bar on every page** for anything that needs attention: an instance offline, a
-  degraded rate limit, controllers reaching the wrong Rotom, Rotom rejecting controllers,
-  Golbat not reporting, or an account present in more than one stack.
+- Whether every **Dragonite**, **RotomNG**, **Golbat** and **Zapdos** answers, and whether
+  Dragonite and RotomNG are **up to date** with their GitHub releases.
+- Kōji, Golbat and the global rate limit per Dragonite, with the admin's controls (pause
+  or reset the limit, reload proxies, accounts or Dragonite).
+- An **alerts bar on every page** for anything that needs attention.
+
+<p align="center">
+  <img src="docs/screenshots/status.png" alt="Status: every Dragonite and RotomNG with its version and health" width="900">
+</p>
 
 ### 🐉 Dragonite
 
 | Page | What you can do |
 |---|---|
-| **Accounts** | Totals and states per stack, accounts by level, and searchable *In use* / *Available* lists across every stack. **Create** an account or **import** a CSV, as the admin does, choosing the one stack it belongs to. Warns when an account is in more than one stack. |
-| **Areas** | Every area with its live workers. **Create** an area (same fields as the admin) in one or several stacks, with at most one of them enabled; **enable/disable**, **edit** workers and per-mode options, and **copy or move** areas between stacks. |
-| **Unbound Modes** | Level, Invasion and Scout modes together: **create, edit, delete and copy** them. Scout jobs on a map, the scout queue (and clearing it), Invasion status charts, Level progress per account, and the areas that answer scout requests. |
-| **Proxies** | Every stack's proxies in one list, counted once however many stacks share them. **Create** a proxy in one or all stacks, **import** a list, **copy** proxies (keeping their names) to other stacks, enable, disable or delete them. |
-| **Scheduler** | Manage **schedules** and **groups**, read the **run ledger**, see what is active now and any diagnostics, **run** a schedule now, run the quest migration, and **copy a schedule** to another stack. |
-| **Metrics** | Dragonite's charts, from Zapdos or from the last 24 h kept in memory. |
+| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state. Add one account or import a CSV. |
+| **Areas** | Every area with its live workers. Create, view and edit them (with a map, routes from [Kōji](https://github.com/TurtIeSocks/Koji), every mode), enable or disable them, start or stop quests, and copy or move them between stacks. |
+| **Unbound Modes** | Level, Invasion and Scout modes: create, edit, delete and copy them; scout jobs on a map and the scout queue. |
+| **Proxies** | Every stack's proxies in one list: add one or import many, copy them to other stacks, enable, disable or delete them. |
+| **Scheduler** | Schedules and groups, the run ledger, what is active now, and copying a schedule to another stack. |
+| **Metrics** | Dragonite's charts, from Zapdos or from memory. |
+
+<p align="center">
+  <img src="docs/screenshots/areas.png" alt="Areas of one stack, with a tab per stack" width="49%">
+  <img src="docs/screenshots/area-view.png" alt="An area's map, routes and modes" width="49%">
+</p>
 
 ### 📱 Rotom
 
 - **Instances**, **Devices**, **Workers**, **Jobs** and **Metrics** for every RotomNG at once.
-- Device actions: restart the app, reboot, enable, disable, disconnect and **view its logcat**
-  in place. Controller actions: request a reconnect or disconnect it. Run and clear jobs.
+- Device actions (restart, reboot, logcat…), controller actions and jobs.
 
 ### 🦇 Golbat
 
-- **Statistics** per Dragonite area: quests scanned, active Pokémon, invasions, raids, lures
-  and Max battles, counted inside each geofence. With `stats_poll_interval`, their evolution
-  over the last 24 h, for every area together or for one.
-- Golbat's Grafana charts, from Zapdos or from the last 24 h kept in memory.
+- **Statistics** per Dragonite area: quests, Pokémon, invasions, raids, lures and Max battles,
+  with their last 24 h when `stats_poll_interval` is set.
+- Golbat's charts, from Zapdos or from memory.
+
+<p align="center">
+  <img src="docs/screenshots/instances.png" alt="Every RotomNG instance at once" width="49%">
+  <img src="docs/screenshots/statistics.png" alt="Golbat statistics per area, with their last 24 h" width="49%">
+</p>
 
 ### And also
 
-- Light and dark themes, a layout that works on phones, and sections that only appear for
-  what your `config.toml` actually configures.
+- **Charts without Zapdos**: whatever Zapdos does not cover is kept in memory and saved to
+  disk, so a restart keeps the last 24 h.
+- Light and dark themes, and a layout made for phones too.
+
+<p align="center">
+  <img src="docs/screenshots/mobile.png" alt="The dashboard on a phone" width="260">
+</p>
 
 ## 🚀 Quick start
 
 Nacli is published as a Docker image for `linux/amd64` and `linux/arm64`.
 
 1. Create `config/config.toml` from [`config.example.toml`](config.example.toml) (see
-   *Configuration* below).
+   *Configuration* below), and a `data` folder Nacli can write to (it runs as uid 1000):
+
+   ```bash
+   mkdir data && sudo chown 1000:1000 data
+   ```
+
 2. Run it:
 
 ```bash
@@ -111,12 +141,16 @@ docker compose up -d
 | `sha-<commit>` | That exact commit |
 | `1.2.3`, `1.2` | A `v1.2.3` release tag |
 
+> [!NOTE]
+> **Edit `config.toml` without restarting.** With the `config` folder mounted, as above,
+> Nacli picks up every save on its own: new stacks, users, URLs or secrets apply within a
+> second, with no container restart. Only `listen` and `state_file` need one. Mount the
+> **folder**, not the file alone: editors that save by replacing the file would leave the
+> container reading the old one.
+
 > [!TIP]
 > Set a fixed `session_secret` so people stay signed in when the container restarts, and
-> keep `listen = "0.0.0.0:7080"` (the default) so the container is reachable. Changes to
-> `config.toml` are picked up on save, with no restart. Mount its **folder**, as above,
-> not the file alone: editors that save by replacing the file would leave the container
-> reading the old one.
+> keep `listen = "0.0.0.0:7080"` (the default) so the container is reachable.
 
 ## ⚙️ Configuration
 
@@ -136,16 +170,14 @@ username = "admin"
 password = "change-this-password"
 
 [[stack]]
-name = "Exeggcute"
+name = "Alpha"
+
+[stack.dragonite]
+url = "http://10.0.0.10:7272"      # Dragonite's API (or its admin + "/api")
 
 [stack.rotom]
 url = "http://10.0.0.10:7072"      # RotomNG http_listener, without /api
 api_secret = "..."                 # its http_listener.secret
-zapdos_instance = "rotom-ng"
-
-[stack.dragonite]
-url = "http://10.0.0.10:7272"      # Dragonite's API (or its admin + "/api")
-zapdos_instance = "dragonite"
 ```
 
 <details>
@@ -252,9 +284,17 @@ npm run dev
 ```mermaid
 flowchart LR
     B["Browser"] -- "session cookie" --> N["Nacli<br/>(Node + Hono)"]
-    N -- "status, actions" --> R["RotomNG"]
-    N -- "API" --> D["Dragonite"]
-    N -- "device locations" --> G["Golbat"]
+    subgraph S1["Stack 1"]
+      D1["Dragonite"]
+      R1["RotomNG"]
+    end
+    subgraph S2["Stack 2 … N"]
+      D2["Dragonite"]
+      R2["RotomNG"]
+    end
+    N -- "API" --> D1 & D2
+    N -- "status, actions" --> R1 & R2
+    N -- "devices, statistics" --> G["Golbat"]
     N -- "PromQL" --> V[("Zapdos<br/>(VictoriaMetrics)")]
     N -. "release checks" .-> GH["GitHub"]
 ```
@@ -262,7 +302,8 @@ flowchart LR
 - The **server** (`server/`, Node + [Hono](https://hono.dev)) talks to each RotomNG and
   Dragonite API on demand, when a page needs it (RotomNG's answers are shared for 3 s), and
   asks Zapdos for the charts. Only for the instances Zapdos does not cover
-  does it read their metrics regularly, to keep the last 24 h in memory.
+  does it read their metrics regularly, to keep the last 24 h in memory (saved to
+  `state_file` on exit and every 5 minutes, so a restart keeps them).
 - The **web app** (`web/`, React + Vite + Tailwind) only ever talks to Nacli's `/api`.
 - `shared/` holds the types both sides use.
 
@@ -284,6 +325,7 @@ flowchart LR
 server/        API server: config, auth, RotomNG, Dragonite, Golbat and Zapdos
 shared/        Types shared by the server and the web app
 web/           React app (pages, components, styles)
+docs/          The README's diagram and screenshots
 Dockerfile     Two-stage image: build on Debian, run on Alpine as a non-root user
 .github/       Workflow that builds and publishes the image to ghcr.io
 ```
