@@ -70,7 +70,7 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
     staleTime: 60_000,
   });
   const spawnLayer: MapLayer[] = spawns.data?.points.length
-    ? [{ key: "spawnpoints", name: "Active spawns", color: "#a855f7", points: spawns.data.points.map((p) => [p.lon, p.lat] as [number, number]), noPath: true }]
+    ? [{ key: "spawnpoints", name: "Active spawns", color: "#a855f7", points: spawns.data.points.map((p) => [p.lon, p.lat] as [number, number]), noPath: true, hidden: true }]
     : [];
   return (
     <Modal

@@ -235,6 +235,7 @@ export function Modal({
   tall,
   icon,
   description,
+  still,
 }: {
   open: boolean;
   onClose: () => void;
@@ -252,6 +253,8 @@ export function Modal({
   full?: boolean;
   /** A fixed height (as tall as `full`), so it does not grow or shrink with its content, e.g. between tabs. */
   tall?: boolean;
+  /** Appears without its entrance animation: when it replaces another, e.g. switching between add forms. */
+  still?: boolean;
 }) {
   // Escape closes only the topmost modal (one can open over another).
   const close = useRef(onClose);
@@ -298,7 +301,8 @@ export function Modal({
         role="dialog"
         aria-modal
         className={cn(
-          "animate-in relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl ring-1 ring-white/5",
+          !still && "animate-in",
+          "relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl ring-1 ring-white/5",
           (full || tall) && "h-[88vh]",
           full ? "max-w-6xl" : large ? "max-w-5xl" : wide ? "max-w-3xl" : "max-w-md",
         )}
@@ -323,6 +327,51 @@ export function Modal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** The choice at the top of an "Add" modal: one item with its form, or several imported at once. */
+export function AddChoice<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string; hint: string; icon: ReactNode }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div role="radiogroup" className="mb-4 grid grid-cols-2 gap-2">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors",
+              on ? "border-primary bg-primary/10" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "grid size-8 shrink-0 place-items-center rounded-lg border [&_svg]:size-4",
+                on ? "border-primary/50 bg-primary/15 text-primary" : "bg-muted/40",
+              )}
+            >
+              {o.icon}
+            </span>
+            <span className="flex min-w-0 flex-col">
+              <span className={cn("text-sm font-medium", on && "text-foreground")}>{o.label}</span>
+              <span className="truncate text-[11px] text-muted-foreground">{o.hint}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

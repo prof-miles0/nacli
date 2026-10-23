@@ -142,14 +142,17 @@ export function DashboardPage() {
     refetchInterval: 10_000,
   });
 
+  // Areas come from every Dragonite with a url (its API).
+  const areasOnMap = !!app?.dragonite.some((d) => d.accounts);
+
   if (isLoading) return <Spinner className="mx-auto mt-20" />;
 
   return (
     <div className="animate-in flex flex-col gap-4">
-      {/* Where the devices are, from Golbat; above everything else. */}
-      {app?.golbatMap ? (
+      {/* Dragonite's areas and, with Golbat, where the devices are; above everything else. */}
+      {app && (app.golbatMap || areasOnMap) ? (
         <Suspense fallback={<Card className="grid h-[440px] place-items-center"><Spinner /></Card>}>
-          <DeviceMap instances={visible} color={color} basemap={app.map} />
+          <DeviceMap instances={visible} color={color} basemap={app.map} withDevices={app.golbatMap} withAreas={areasOnMap} />
         </Suspense>
       ) : null}
       {app?.dragonite.length ? <DragoniteOverview instances={visible} color={color} /> : null}

@@ -21,6 +21,9 @@ services:
       # reloads it on every save. Mount the folder, not the file: editors that
       # save by replacing the file would leave the container with the old one.
       - ./config:/app/config:ro
+      # Where the chart and Statistics histories kept in memory are saved, so
+      # they survive restarts and updates ([server] state_file).
+      - ./data:/app/data
     # environment:
     #   TZ: Europe/Madrid            # time zone for the server's log lines
     logging:

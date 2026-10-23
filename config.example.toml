@@ -17,14 +17,19 @@ secure_cookies = false
 # RotomNG and Dragonite are read on demand, when a page needs them. This is how
 # often the metrics of RotomNG, Dragonite and Golbat are read for the history
 # kept in memory (only for those Zapdos does not cover). A shorter
-# interval gives finer charts and uses more memory.
-poll_interval = "10s"
+# interval gives finer charts and uses more memory. At least "30s".
+poll_interval = "30s"
 # Maximum wait time per request to an instance.
 request_timeout = "8s"
 # How much chart history is kept in memory. Charts use it for every instance
 # that Zapdos does not cover: without [zapdos], without a
 # zapdos_instance, or with a zapdos_instance that has no data there.
 history_retention = "24h"
+# Where the histories kept in memory (these charts and the Statistics one) are
+# saved on exit and every 5 minutes, and loaded at start, so a restart keeps
+# them. Relative to the working folder; in Docker, mount /app/data. "" keeps
+# them in memory only.
+# state_file = "data/state.json.gz"
 
 # Basemap for every map in Nacli: the Dashboard (devices, area geofences and
 # controller trails) and Unbound Modes (scout jobs). Configure it: without it
@@ -110,7 +115,7 @@ zapdos_instance = "rotom-ng-lunala"
 #   stats_poll_interval  (optional, needs url) How often the Statistics page's
 #                     figures are taken for their history; the last 24 h stay
 #                     in memory and the page charts them. Empty: no history.
-#                     At least "1m"; each take asks Golbat about every area.
+#                     At least "5m"; each take asks Golbat about every area.
 # [golbat]
 # url = "http://10.0.0.20:9001"
 # api_secret = "..."

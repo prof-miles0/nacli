@@ -92,6 +92,7 @@ Nacli is published as a Docker image for `linux/amd64` and `linux/arm64`.
 ```bash
 docker run -d --name nacli -p 7080:7080 \
   -v $PWD/config:/app/config:ro \
+  -v $PWD/data:/app/data \
   ghcr.io/prof-miles0/nacli:latest
 ```
 
@@ -159,9 +160,10 @@ zapdos_instance = "dragonite"
 | `session_secret` | random | Signs session cookies. If empty, one is generated at startup and sessions are lost on restart. |
 | `session_ttl` | `"24h"` | How long a sign-in lasts. |
 | `secure_cookies` | `false` | Mark the cookie `Secure`; also on automatically behind a proxy sending `X-Forwarded-Proto: https`. |
-| `poll_interval` | `"10s"` | How often the metrics of RotomNG, Dragonite and Golbat are read for the history in memory (only for those Zapdos does not cover). |
+| `poll_interval` | `"30s"` | How often the metrics of RotomNG, Dragonite and Golbat are read for the history in memory (only for those Zapdos does not cover). At least `"30s"`. |
 | `request_timeout` | `"8s"` | Longest wait for any instance. |
 | `history_retention` | `"24h"` | Chart history kept in memory, for every instance Zapdos does not cover. |
+| `state_file` | `"data/state.json.gz"` | Where the histories kept in memory (charts and Statistics) are saved on exit and every 5 minutes, and loaded at start. Relative to the working folder (`/app/data` in Docker). `""` keeps them in memory only. |
 
 #### `[[users]]`
 
@@ -201,7 +203,7 @@ public URLs and a client key. The example uses CARTO's Voyager and Dark Matter s
 - `zapdos_instance` (optional): its `instance` label in Zapdos, for the Metrics page to
   draw the stored data.
 - `stats_poll_interval` (optional, needs `url`): how often the Statistics figures are taken
-  to chart their last 24 h (kept in memory). Empty or missing: no history. At least `"1m"`.
+  to chart their last 24 h (kept in memory). Empty or missing: no history. At least `"5m"`.
 
 #### `[zapdos]` (optional)
 
@@ -217,7 +219,8 @@ Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the ad
 there; **without `[zapdos]`, without a `zapdos_instance`, or with one that has no data,
 they come from memory**. Nacli checks which ones have data at startup, whenever
 `config.toml` changes and every 5 minutes; an instance whose data stops arriving starts its
-memory history from that moment. Rotom's charts can mix both; a Dragonite chart that adds
+memory history from that moment. That history and the Statistics one are saved to `state_file`
+on exit and every 5 minutes, and loaded at start, so a restart keeps the charts. Rotom's charts can mix both; a Dragonite chart that adds
 several stacks together uses memory as soon as one of them does.
 
 </details>

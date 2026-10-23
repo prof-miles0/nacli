@@ -33,6 +33,7 @@ import type {
   Tagged,
   Worker,
 } from "../shared/types.ts";
+import { type AccountState, accountState } from "../shared/types.ts";
 import {
   checkCredentials,
   clearFailedLogins,
@@ -55,6 +56,7 @@ import {
 } from "./dragonite.ts";
 import { runPanel, vmScalars } from "./vmpanels.ts";
 import { LOCAL_GOLBAT, LocalMetrics, localRotom } from "./local-metrics.ts";
+import { loadState, type SavedState, saveState, saveStateNow } from "./state.ts";
 import {
   ACCOUNT_SORTS,
   accountLevelStats,
@@ -117,6 +119,9 @@ const registry = new RotomRegistry(cfg);
 // Zapdos does not cover (no [zapdos], no zapdos_instance, or no
 // data for it there). Set again after each Zapdos check.
 const localMetrics = new LocalMetrics();
+// What the last run kept in memory ([server] state_file), so charts survive a restart.
+const saved = loadState(cfg.stateFile);
+if (saved.metrics) localMetrics.restore(saved.metrics);
 function applyMemory() {
   localMetrics.apply(cfg, {
     rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.zapdosInstance ?? ""),
@@ -186,6 +191,8 @@ async function checkVm() {
   }
   vmReady = next;
   applyMemory();
+  // Restored histories not taken back by now belong to instances on Zapdos.
+  localMetrics.forgetRestored();
 }
 applyMemory();
 void checkVm();
@@ -786,6 +793,11 @@ app.get("/api/dragonite-accounts", async (c) => {
     if (needle) rows = rows.filter((a) => a.username.toLowerCase().includes(needle));
     // ?in_use=true|false: the accounts a worker is using now, or the rest.
     if (q("in_use") === "true" || q("in_use") === "false") rows = rows.filter((a) => a.in_use === (q("in_use") === "true"));
+    // ?status=banned|…: one state only; the counts are of every state, for the filter.
+    const states: Partial<Record<AccountState, number>> = {};
+    for (const a of rows) states[accountState(a)] = (states[accountState(a)] ?? 0) + 1;
+    const status = q("status");
+    if (status) rows = rows.filter((a) => accountState(a) === status);
     const val = (a: DragoniteAccount) => (a as unknown as Record<string, unknown>)[sortBy];
     rows.sort((a, b) => {
       const x = val(a);
@@ -799,6 +811,7 @@ app.get("/api/dragonite-accounts", async (c) => {
       total: rows.length,
       pages: Math.max(1, Math.ceil(rows.length / perPage)),
       rows: rows.slice(page * perPage, (page + 1) * perPage),
+      states,
     });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
@@ -1763,10 +1776,14 @@ app.get("/api/system-status", async (c) => {
     const ctx = golbatCtx();
     const [summary, health] = await Promise.allSettled([
       ctx ? cachedVm(`golbat:${ctx.source}:summary`, 60_000 * 240 / 2, () => golbatSummary(ctx.vm, ctx.golbat, 20_000)) : Promise.reject(new Error("no metrics")),
+      // /api/health needs the api_secret, so a wrong one shows up here too.
       cfg.golbat.api
-        ? fetch(`${cfg.golbat.api.url}/health`, { headers: cfg.golbat.api.headers, signal: AbortSignal.timeout(cfg.requestTimeoutMs) }).then((r) => {
+        ? (async (t0) => {
+            const r = await fetch(`${cfg.golbat!.api!.url}/api/health`, { headers: cfg.golbat!.api!.headers, signal: AbortSignal.timeout(cfg.requestTimeoutMs) });
+            if (r.status === 401 || r.status === 403) throw new Error("api_secret rejected");
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          })
+            return Date.now() - t0;
+          })(Date.now())
         : Promise.reject(new Error("no url")),
     ]);
     const sm = summary.status === "fulfilled" ? summary.value : undefined;
@@ -1777,6 +1794,7 @@ app.get("/api/system-status", async (c) => {
       rawErrors: sm?.rawErrors,
       api: !!cfg.golbat.api,
       apiOk: cfg.golbat.api ? health.status === "fulfilled" : undefined,
+      apiLatencyMs: health.status === "fulfilled" ? health.value : undefined,
       apiError: cfg.golbat.api && health.status === "rejected" ? (health.reason as Error).message : undefined,
     };
   }
@@ -1962,7 +1980,7 @@ app.get("/api/golbat/area-stats", async (c) => {
 const STATS_CACHE = "golbat:area-stats";
 const STATS_KEEP_MS = 24 * 3_600_000;
 /** One take: the totals and each area's figures, by "stack:areaId". */
-let statsHistory: { t: number; totals: AreaStatsCounts; areas: Record<string, AreaStatsCounts> }[] = [];
+let statsHistory: SavedState["stats"] = (saved.stats ?? []).filter((x) => x.t >= Date.now() - STATS_KEEP_MS);
 let statsTimer: NodeJS.Timeout | undefined;
 let statsEvery: number | undefined;
 let statsBusy = false;
@@ -2289,8 +2307,12 @@ const server = serve({ fetch: app.fetch, hostname: cfg.host, port: cfg.port }, (
   for (const i of cfg.instances) console.log(`  · ${i.name} → ${i.url}`);
 });
 
+const state = (): SavedState => ({ savedAt: Date.now(), metrics: localMetrics.dump(), stats: statsHistory });
+setInterval(() => void saveState(cfg.stateFile, state()), 5 * 60_000).unref();
+
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
+    saveStateNow(cfg.stateFile, state());
     server.close();
     process.exit(0);
   });

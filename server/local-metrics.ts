@@ -24,6 +24,12 @@ const TICK_MS = 2_000;
 /** Old samples are dropped in batches, not on every scrape. */
 const TRIM_BATCH = 60;
 
+const seriesKey = (labels: Labels) =>
+  Object.keys(labels)
+    .sort()
+    .map((k) => `${k}=${labels[k]}`)
+    .join(",");
+
 interface Series {
   labels: Labels;
   /** Index in the instance's `times` of this series' first value. */
@@ -32,20 +38,43 @@ interface Series {
   vs: number[];
 }
 
+/** One instance's store as saved to the state file (NaN saved as null). */
+export interface SavedInstance {
+  times: number[];
+  series: [labels: Labels, off: number, vs: (number | null)[]][];
+}
+
 /** Samples of one Dragonite, all series aligned on the scrape timestamps. */
 class InstanceStore {
   times: number[] = [];
   series = new Map<string, Series>();
   byName = new Map<string, Series[]>();
 
+  dump(): SavedInstance {
+    return {
+      times: this.times,
+      series: [...this.series.values()].map((s) => [s.labels, s.off, s.vs.map((v) => (Number.isNaN(v) ? null : v))]),
+    };
+  }
+
+  static load(saved: SavedInstance) {
+    const store = new InstanceStore();
+    store.times = saved.times;
+    for (const [labels, off, vs] of saved.series) {
+      const s: Series = { labels, off, vs: vs.map((v) => v ?? NaN) };
+      store.series.set(seriesKey(labels), s);
+      const list = store.byName.get(labels.__name__) ?? [];
+      list.push(s);
+      store.byName.set(labels.__name__, list);
+    }
+    return store;
+  }
+
   add(t: number, samples: { labels: Labels; v: number }[]) {
     this.times.push(t);
     const idx = this.times.length - 1;
     for (const smp of samples) {
-      const key = Object.keys(smp.labels)
-        .sort()
-        .map((k) => `${k}=${smp.labels[k]}`)
-        .join(",");
+      const key = seriesKey(smp.labels);
       let s = this.series.get(key);
       if (!s) {
         s = { labels: smp.labels, off: idx, vs: [] };
@@ -59,10 +88,10 @@ class InstanceStore {
     }
   }
 
-  trim(cutoff: number) {
+  trim(cutoff: number, now = false) {
     let n = 0;
     while (n < this.times.length && this.times[n] < cutoff) n++;
-    if (n < TRIM_BATCH) return;
+    if (n < (now ? 1 : TRIM_BATCH)) return;
     this.times.splice(0, n);
     for (const [key, s] of this.series) {
       const drop = n - s.off;
@@ -142,6 +171,8 @@ export class LocalMetrics implements SeriesSource {
   private timeoutMs = 8000;
   private timer?: NodeJS.Timeout;
   private lastError = new Map<string, string>();
+  /** Loaded from the state file, waiting for apply() to want them back. */
+  private restored = new Map<string, InstanceStore>();
 
   /**
    * (Re)configures from config.toml and from which instances need memory.
@@ -188,6 +219,13 @@ export class LocalMetrics implements SeriesSource {
       });
     }
     const keep = new Set(this.targets.map((t) => t.instance));
+    for (const inst of keep) {
+      const back = this.restored.get(inst);
+      if (!back || this.stores.has(inst)) continue;
+      back.trim(Date.now() - this.retentionMs - 3_600_000, true);
+      this.stores.set(inst, back);
+      this.restored.delete(inst);
+    }
     for (const inst of this.stores.keys()) if (!keep.has(inst)) this.stores.delete(inst);
     for (const k of this.lastScrape.keys()) if (!this.targets.some((t) => t.key === k)) this.lastScrape.delete(k);
     if (this.targets.length && !this.timer) {
@@ -197,6 +235,26 @@ export class LocalMetrics implements SeriesSource {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+  }
+
+  /** Every instance's history, for the state file. */
+  dump(): Record<string, SavedInstance> {
+    const out: Record<string, SavedInstance> = {};
+    for (const [inst, store] of [...this.restored, ...this.stores]) if (store.times.length) out[inst] = store.dump();
+    return out;
+  }
+
+  /**
+   * Takes back what the state file saved. Each instance returns to the charts
+   * once apply() reads it from memory again; until forgetRestored(), so the
+   * ones that turn out to be on Zapdos are dropped after the first check.
+   */
+  restore(saved: Record<string, SavedInstance>) {
+    for (const [inst, s] of Object.entries(saved)) this.restored.set(inst, InstanceStore.load(s));
+  }
+
+  forgetRestored() {
+    this.restored.clear();
   }
 
   get active() {

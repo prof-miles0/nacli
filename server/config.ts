@@ -63,6 +63,8 @@ export interface AppConfig {
   pollIntervalMs: number;
   requestTimeoutMs: number;
   historyRetentionMs: number;
+  /** Where the memory histories are saved on exit and loaded at start ("" = not saved). */
+  stateFile: string;
   /** When set, chart history comes from Zapdos instead of memory. */
   zapdos?: ZapdosConfig;
   /**
@@ -206,9 +208,10 @@ export function loadConfig(path: string): AppConfig {
     sessionSecret: str(server.session_secret) || fallbackSecret,
     sessionTtlMs: parseDuration(server.session_ttl, 24 * 3_600_000),
     secureCookies: server.secure_cookies === true,
-    pollIntervalMs: Math.max(2000, parseDuration(server.poll_interval, 10_000)),
+    pollIntervalMs: atLeast("[server] poll_interval", parseDuration(server.poll_interval, 30_000), 30_000, "30s"),
     requestTimeoutMs: parseDuration(server.request_timeout, 8000),
     historyRetentionMs: parseDuration(server.history_retention, 24 * 3_600_000),
+    stateFile: server.state_file === undefined ? resolve("data/state.json.gz") : str(server.state_file).trim() && resolve(str(server.state_file).trim()),
     zapdos: vm,
     golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
@@ -268,6 +271,13 @@ function parseMap(m: Table) {
   };
 }
 
+/** `ms`, raised to `min` (with a warning) when config.toml asks for less. */
+function atLeast(key: string, ms: number, min: number, label: string) {
+  if (ms >= min) return ms;
+  console.warn(`[config] ${key} is below the minimum, using ${label}`);
+  return min;
+}
+
 function parseGolbat(g: Table, vm?: ZapdosConfig) {
   const url = str(g.url).trim().replace(/\/+$/, "");
   if (url && !/^https?:\/\//.test(url)) throw new Error("[golbat] url must start with http:// or https://");
@@ -278,8 +288,8 @@ function parseGolbat(g: Table, vm?: ZapdosConfig) {
   const label = vm?.instanceLabel ?? "instance";
   const selector = zapdosInstance ? `${label}="${zapdosInstance.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : "";
   // Area statistics history: off unless an interval is given.
-  const statsPollIntervalMs = parseDuration(g.stats_poll_interval, 0);
-  if (statsPollIntervalMs && statsPollIntervalMs < 60_000) throw new Error("[golbat] stats_poll_interval must be at least 1m");
+  const every = parseDuration(g.stats_poll_interval, 0);
+  const statsPollIntervalMs = every && atLeast("[golbat] stats_poll_interval", every, 5 * 60_000, "5m");
   if (statsPollIntervalMs && !url) throw new Error("[golbat] stats_poll_interval needs url");
   return { zapdosInstance, selector, api: url ? { url, headers } : undefined, statsPollIntervalMs: statsPollIntervalMs || undefined };
 }

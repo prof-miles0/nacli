@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, Check, ChevronRight, CirclePlay, CircleStop, Copy, Eye, Minus, Pencil, Plus } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronRight, CirclePlay, CircleStop, Copy, Eye, Minus, Pencil, Plus, PowerOff } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { DragoniteArea, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
 import { useNotify } from "@/components/actions";
@@ -10,6 +10,7 @@ import { QuestModal, type QuestRequest } from "@/components/quest-actions";
 import { type FolderTab, FolderTabs, tabTint } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { MenuButton } from "@/components/menu-button";
+import { useStacks } from "@/components/stack-tag";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { matches, SearchBox, useSorted } from "@/components/table-tools";
 import { Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
@@ -186,7 +187,7 @@ export function DragoniteAreasPage() {
         actions={
           <Button onClick={() => setCreating(true)}>
             <Plus />
-            New area
+            New
           </Button>
         }
       />
@@ -241,7 +242,7 @@ function StackAreas({
   tabbed?: boolean;
   /** Shown between the header and the areas (the search box). */
   toolbar?: React.ReactNode;
-  /** Buttons at the right of that row (e.g. "New area"). */
+  /** Buttons at the right of that row (e.g. "New"). */
   actions?: React.ReactNode;
 }) {
   const color = useInstanceColor();
@@ -283,6 +284,7 @@ function StackAreas({
     }
   };
   const [transfer, setTransfer] = useState<{ area: DragoniteArea; move: boolean }>();
+  const [disablingAll, setDisablingAll] = useState(false);
   const others = stacks.filter((x) => x.id !== stack.id);
   const [quest, setQuest] = useState<QuestRequest>();
   /** Why an area cannot scan quests now, if it cannot. */
@@ -343,6 +345,7 @@ function StackAreas({
     queryFn: () => endpoints.dragoniteAreas(stack.id),
     refetchInterval: 15_000,
   });
+  const enabledAreas = (q.data?.areas ?? []).filter((a) => a.enabled);
   const rows = (q.data?.areas ?? []).filter((a) => matches(search, a.name));
   const { sorted, header } = useSorted(
     rows,
@@ -580,26 +583,27 @@ function StackAreas({
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {toolbar}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* The admin's quest buttons, for every active area of this stack. */}
-          <Button
-            variant="outline"
-            className="border-green-500/40 text-green-400 hover:bg-green-500/10 hover:text-green-300"
-            onClick={() => setQuest({ action: "start" })}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {/* For every area of this stack: the admin's quest buttons, and switching them all off. */}
+          <MenuButton
+            kind="All areas"
+            subject={`${fmt.int(q.data?.areas.length ?? 0)} areas`}
+            label="All areas"
             disabled={!q.data}
-          >
-            <CirclePlay />
-            Start all quests
-          </Button>
-          <Button
-            variant="outline"
-            className="border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-            onClick={() => setQuest({ action: "stop" })}
-            disabled={!q.data}
-          >
-            <CircleStop />
-            Stop all quests
-          </Button>
+            items={[
+              {
+                key: "disable-all",
+                label: "Disable every area",
+                hint: enabledAreas.length ? `Turns off the ${fmt.int(enabledAreas.length)} enabled` : "None is enabled",
+                icon: PowerOff,
+                danger: true,
+                disabled: !enabledAreas.length,
+                onSelect: () => setDisablingAll(true),
+              },
+              { key: "quest-start", label: "Start all quests", hint: "Every active area scans its quests now", icon: CirclePlay, positive: true, onSelect: () => setQuest({ action: "start" }) },
+              { key: "quest-stop", label: "Stop all quests", hint: "Stops every quest scan", icon: CircleStop, danger: true, onSelect: () => setQuest({ action: "stop" }) },
+            ]}
+          />
           {actions}
         </div>
       </div>
@@ -626,6 +630,17 @@ function StackAreas({
       )}
 
       {notice}
+      {disablingAll ? (
+        <DisableAllModal
+          stack={stack}
+          areas={enabledAreas}
+          onClose={() => setDisablingAll(false)}
+          onDone={(text, tone) => {
+            void qc.invalidateQueries({ queryKey: ["dragonite-areas", stack.id] });
+            notify({ text, tone });
+          }}
+        />
+      ) : null}
       {quest ? <QuestModal stack={stack} areas={q.data?.areas ?? []} request={quest} onClose={() => setQuest(undefined)} /> : null}
       {viewing ? (
         <AreaViewModal
@@ -809,5 +824,71 @@ function Field({ k, v }: { k: string; v: string }) {
       <span className="text-muted-foreground">{k}</span>
       <span className="font-medium tabular-nums">{v}</span>
     </div>
+  );
+}
+
+/** "Disable every area": asks first, then switches them off one by one. */
+function DisableAllModal({
+  stack,
+  areas,
+  onClose,
+  onDone,
+}: {
+  stack: DragoniteInfo;
+  areas: DragoniteArea[];
+  onClose: () => void;
+  onDone: (text: string, tone?: "warning" | "error") => void;
+}) {
+  const { multi } = useStacks();
+  const [done, setDone] = useState<number>();
+  const run = async () => {
+    const failed: string[] = [];
+    for (let i = 0; i < areas.length; i++) {
+      setDone(i);
+      try {
+        await endpoints.setAreaEnabled(stack.id, areas[i].id, false);
+      } catch (e) {
+        failed.push(`${areas[i].name}: ${(e as Error).message}`);
+      }
+    }
+    const off = areas.length - failed.length;
+    const where = multi ? ` on ${stack.name}` : "";
+    onDone(
+      failed.length ? `${fmt.int(off)} of ${fmt.int(areas.length)} areas disabled${where} · ${failed.join(" · ")}` : `${fmt.int(off)} areas disabled${where}`,
+      failed.length ? (off ? "warning" : "error") : undefined,
+    );
+    onClose();
+  };
+  const busy = done !== undefined;
+  return (
+    <Modal
+      open
+      onClose={busy ? () => {} : onClose}
+      icon={<PowerOff />}
+      title="Disable every area"
+      description={`${fmt.int(areas.length)} enabled${multi ? ` on ${stack.name}` : ""}; their workers stop scanning`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={run} disabled={busy}>
+            {busy ? <Spinner className="size-4" /> : <PowerOff />}
+            {busy ? `Disabling ${fmt.int(done + 1)} of ${fmt.int(areas.length)}…` : `Disable ${fmt.int(areas.length)} areas`}
+          </Button>
+        </>
+      }
+    >
+      <ul className="flex max-h-56 flex-wrap gap-1.5 overflow-auto">
+        {areas.map((a, i) => (
+          <li
+            key={a.id}
+            className={cn("rounded-md border px-2 py-0.5 text-xs", busy && i < done ? "text-muted-foreground line-through" : busy && i === done ? "border-red-500/50 text-red-300" : "")}
+          >
+            {a.name}
+          </li>
+        ))}
+      </ul>
+    </Modal>
   );
 }

@@ -4,11 +4,11 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, FileUp, Plus, Upload, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type { AccountImportResult, DragoniteInfo } from "@shared/types";
 import { StackTag } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
-import { Button, Input, Label, Modal, Select, Spinner, Table } from "@/components/ui";
+import { AddChoice, Button, Input, Label, Modal, Select, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
@@ -74,8 +74,38 @@ function ProviderSelect({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
+/** Accounts' "Add": one account, or several imported from a CSV; the choice sits at the top. */
+export function AddAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo[]; onClose: () => void }) {
+  const [kind, setKind] = useState<"one" | "import">("one");
+  const [switched, setSwitched] = useState(false);
+  const choice = (
+    <AddChoice
+      value={kind}
+      onChange={(v) => {
+        setKind(v);
+        setSwitched(true);
+      }}
+      options={[
+        { value: "one", label: "One account", hint: "Username and password", icon: <Plus /> },
+        { value: "import", label: "Import several", hint: "Paste or load a CSV", icon: <Upload /> },
+      ]}
+    />
+  );
+  return kind === "one" ? (
+    <CreateAccountModal stacks={stacks} onClose={onClose} choice={choice} still={switched} />
+  ) : (
+    <ImportAccountsModal stacks={stacks} onClose={onClose} choice={choice} still={switched} />
+  );
+}
+
+/** What AddAccountsModal passes each form: its choice on top, and no entrance animation after a switch. */
+interface Chosen {
+  choice?: ReactNode;
+  still?: boolean;
+}
+
 /** The admin's "Create One Account": username, password, provider and level. */
-export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[]; onClose: () => void }) {
+function CreateAccountModal({ stacks, onClose, choice, still }: { stacks: DragoniteInfo[]; onClose: () => void } & Chosen) {
   const forget = useForgetAccounts();
   const [stack, setStack] = useState(stacks.length === 1 ? stacks[0].id : undefined);
   const [username, setUsername] = useState("");
@@ -106,8 +136,10 @@ export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[
   return (
     <Modal
       open
+      wide
+      still={still}
       onClose={onClose}
-      title="Create one account"
+      title={choice ? "Add accounts" : "Create one account"}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -120,6 +152,7 @@ export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[
         </>
       }
     >
+      {choice}
       <form
         className="flex flex-col gap-4"
         onSubmit={(e) => {
@@ -199,7 +232,7 @@ const localNow = () => {
 };
 
 /** The admin's "Import multiple accounts": a CSV plus level, provider and release time. */
-export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo[]; onClose: () => void }) {
+function ImportAccountsModal({ stacks, onClose, choice, still }: { stacks: DragoniteInfo[]; onClose: () => void } & Chosen) {
   const forget = useForgetAccounts();
   const file = useRef<HTMLInputElement>(null);
   const [stack, setStack] = useState(stacks.length === 1 ? stacks[0].id : undefined);
@@ -243,8 +276,9 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
     <Modal
       open
       wide
+      still={still}
       onClose={onClose}
-      title="Import multiple accounts"
+      title={choice ? "Add accounts" : "Import multiple accounts"}
       footer={
         result ? (
           <Button onClick={onClose}>Close</Button>
@@ -287,103 +321,106 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
           ) : null}
         </div>
       ) : (
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canRun) run();
-          }}
-        >
-          {stacks.length > 1 ? (
-            <div className={field}>
-              <Label>Stack</Label>
-              <StackChoice stacks={stacks} value={stack} onChange={setStack} />
-            </div>
-          ) : null}
-          <label className={field}>
-            <span className="flex items-center justify-between gap-2">
-              <Label>Accounts</Label>
-              <button type="button" onClick={() => file.current?.click()} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                <FileUp className="size-3.5" />
-                Load a file
-              </button>
-            </span>
-            <textarea
-              value={csv}
-              onChange={(e) => setCsv(e.target.value)}
-              rows={7}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={"username,password\nusername,password"}
-              className="rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <span className="text-[11px] text-muted-foreground">CSV of the accounts list, one account per line.</span>
-            <input
-              ref={file}
-              type="file"
-              accept=".csv,.txt,text/csv,text/plain"
-              hidden
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (f) setCsv(await f.text());
-                e.target.value = "";
-              }}
-            />
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className={field}>
-              <Label>Level</Label>
-              <Input type="number" min={0} max={LEVEL_MAX} value={level} onChange={(e) => setLevel(e.target.value)} />
-            </label>
-            <label className={field}>
-              <Label>Provider</Label>
-              <ProviderSelect value={provider} onChange={setProvider} />
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 self-end pb-2">
-              <input type="checkbox" checked={useNow} onChange={(e) => setUseNow(e.target.checked)} className="size-4 accent-[var(--primary)]" />
-              Use immediately
-            </label>
-            <label className={field}>
-              <Label>Last released</Label>
-              <Input type="datetime-local" value={released} onChange={(e) => setReleased(e.target.value)} disabled={useNow} />
-            </label>
-          </div>
-          {withSpaces ? <p className="text-[11px] text-amber-400">{fmt.int(withSpaces)} line(s) have spaces in the username or password.</p> : null}
-          {accounts.length ? (
-            <div className="flex flex-col gap-1.5">
-              <Label>
-                Preview · {fmt.int(accounts.length)} account{accounts.length === 1 ? "" : "s"}
-              </Label>
-              <div className="max-h-48 overflow-auto rounded-lg border">
-                <Table>
-                  <thead>
-                    <tr>
-                      <th>Username</th>
-                      <th>Password</th>
-                      <th>Level</th>
-                      <th>Provider</th>
-                      <th>Last released</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.slice(0, 100).map((a, i) => (
-                      <tr key={i}>
-                        <td className="font-mono text-xs">{a.username}</td>
-                        <td className="text-muted-foreground">••••••</td>
-                        <td className="tabular-nums">{level}</td>
-                        <td>{provider}</td>
-                        <td className="text-muted-foreground">{useNow ? "Use immediately" : new Date(released).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
+        <>
+          {choice}
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (canRun) run();
+            }}
+          >
+            {stacks.length > 1 ? (
+              <div className={field}>
+                <Label>Stack</Label>
+                <StackChoice stacks={stacks} value={stack} onChange={setStack} />
               </div>
-              {accounts.length > 100 ? <span className="text-[11px] text-muted-foreground">Showing the first 100.</span> : null}
+            ) : null}
+            <label className={field}>
+              <span className="flex items-center justify-between gap-2">
+                <Label>Accounts</Label>
+                <button type="button" onClick={() => file.current?.click()} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <FileUp className="size-3.5" />
+                  Load a file
+                </button>
+              </span>
+              <textarea
+                value={csv}
+                onChange={(e) => setCsv(e.target.value)}
+                rows={7}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder={"username,password\nusername,password"}
+                className="rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <span className="text-[11px] text-muted-foreground">CSV of the accounts list, one account per line.</span>
+              <input
+                ref={file}
+                type="file"
+                accept=".csv,.txt,text/csv,text/plain"
+                hidden
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setCsv(await f.text());
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className={field}>
+                <Label>Level</Label>
+                <Input type="number" min={0} max={LEVEL_MAX} value={level} onChange={(e) => setLevel(e.target.value)} />
+              </label>
+              <label className={field}>
+                <Label>Provider</Label>
+                <ProviderSelect value={provider} onChange={setProvider} />
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 self-end pb-2">
+                <input type="checkbox" checked={useNow} onChange={(e) => setUseNow(e.target.checked)} className="size-4 accent-[var(--primary)]" />
+                Use immediately
+              </label>
+              <label className={field}>
+                <Label>Last released</Label>
+                <Input type="datetime-local" value={released} onChange={(e) => setReleased(e.target.value)} disabled={useNow} />
+              </label>
             </div>
-          ) : null}
-          {error ? <p className="text-red-300">{error}</p> : null}
-          <button type="submit" hidden />
-        </form>
+            {withSpaces ? <p className="text-[11px] text-amber-400">{fmt.int(withSpaces)} line(s) have spaces in the username or password.</p> : null}
+            {accounts.length ? (
+              <div className="flex flex-col gap-1.5">
+                <Label>
+                  Preview · {fmt.int(accounts.length)} account{accounts.length === 1 ? "" : "s"}
+                </Label>
+                <div className="max-h-48 overflow-auto rounded-lg border">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Password</th>
+                        <th>Level</th>
+                        <th>Provider</th>
+                        <th>Last released</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accounts.slice(0, 100).map((a, i) => (
+                        <tr key={i}>
+                          <td className="font-mono text-xs">{a.username}</td>
+                          <td className="text-muted-foreground">••••••</td>
+                          <td className="tabular-nums">{level}</td>
+                          <td>{provider}</td>
+                          <td className="text-muted-foreground">{useNow ? "Use immediately" : new Date(released).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+                {accounts.length > 100 ? <span className="text-[11px] text-muted-foreground">Showing the first 100.</span> : null}
+              </div>
+            ) : null}
+            {error ? <p className="text-red-300">{error}</p> : null}
+            <button type="submit" hidden />
+          </form>
+        </>
       )}
     </Modal>
   );

@@ -18,14 +18,24 @@ const FONT = ["Montserrat Medium", "Open Sans Bold", "Noto Sans Regular", "HanWa
  */
 const CLUSTER_RADIUS = 40;
 const CLUSTER_MAX_ZOOM = 8;
+/** Areas closer than CLUSTER_RADIUS px merge into one circle up to this zoom (a region in view). */
+const AREA_CLUSTER_MAX_ZOOM = 7;
 const MIXED = "#71717a";
 
 export const isDark = () => document.documentElement.classList.contains("dark");
 /** Layers this component adds on top of the basemap (kept across style swaps). */
-const OUR_LAYERS = ["geofence-fill", "geofence-line", "trail", "clusters-halo", "clusters", "cluster-count", "devices-halo", "devices", "devices-shape", "selected-glow", "selected-ring"];
+const OUR_LAYERS = ["geofence-fill", "geofence-line", "area-clusters-halo", "area-clusters", "area-cluster-count", "area-hit", "area-points", "area-names", "trail", "clusters-halo", "clusters", "cluster-count", "devices-halo", "devices", "devices-shape", "selected-glow", "selected-dot", "selected-ring"];
+/**
+ * With areas on the map, the devices show only from this zoom on (a city or
+ * so in view): zoomed out, the areas alone say where each stack scans. The
+ * selected controller shows at any zoom.
+ */
+const DEVICES_MIN_ZOOM = 9;
+/** The layers DEVICES_MIN_ZOOM hides. */
+const ZOOMED_LAYERS = ["clusters-halo", "clusters", "cluster-count", "devices-halo", "devices", "devices-shape"];
 /** Layers a device can be clicked or hovered on. */
 const DEVICE_LAYERS = ["devices", "devices-shape"];
-const OUR_SOURCES = ["geofences", "trail", "devices", "selected"];
+const OUR_SOURCES = ["geofences", "area-points", "trail", "devices", "selected"];
 /** Same limit as the server's trail: further than this is a jump, not a walk. */
 const JUMP_KM = 50;
 const ROAMING_MODES = new Set(["InvasionMode", "ScoutMode"]);
@@ -186,7 +196,7 @@ export function baseStyle(map: NonNullable<AppInfo["map"]>, dark: boolean): stri
   };
 }
 
-const km = (a: MapDevice, b: { lat: number; lon: number }) => {
+const km = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
   const rad = Math.PI / 180;
   const x = (b.lon - a.lon) * rad * Math.cos(((a.lat + b.lat) / 2) * rad);
   const y = (b.lat - a.lat) * rad;
@@ -197,7 +207,7 @@ const km = (a: MapDevice, b: { lat: number; lon: number }) => {
  * The devices around the median position, so one far away (another country)
  * does not zoom the map out to the whole world; zooming out still shows it.
  */
-function mainGroup(ds: MapDevice[], radiusKm = 2500) {
+function mainGroup<P extends { lat: number; lon: number }>(ds: P[], radiusKm = 2500) {
   if (ds.length < 3) return ds;
   const mid = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
   const centre = { lat: mid(ds.map((d) => d.lat)), lon: mid(ds.map((d) => d.lon)) };
@@ -366,13 +376,23 @@ export function DeviceMap({
   instances,
   color,
   basemap,
+  withDevices,
+  withAreas,
 }: {
   instances: InstanceInfo[];
   color: (id: string) => string;
   basemap?: AppInfo["map"];
+  /** Golbat is configured: its devices are drawn. */
+  withDevices: boolean;
+  /** Some stack has a Dragonite url: its areas are drawn. */
+  withAreas: boolean;
 }) {
-  const q = useQuery({ queryKey: ["golbat-devices"], queryFn: endpoints.golbatDevices, refetchInterval: 15_000 });
-  const fences = useQuery({ queryKey: ["dragonite-geofences"], queryFn: endpoints.geofences, refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ["golbat-devices"], queryFn: endpoints.golbatDevices, refetchInterval: 15_000, enabled: withDevices });
+  const fences = useQuery({ queryKey: ["dragonite-geofences"], queryFn: endpoints.geofences, refetchInterval: 60_000, enabled: withAreas });
+  const areaCount = (fences.data ?? []).reduce((n, s) => n + s.areas.length, 0);
+  // Zoomed out with areas to show, the devices wait for a closer zoom.
+  const gated = withDevices && areaCount > 0;
+  const [zoom, setZoom] = useState(4.5);
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | undefined>(undefined);
   const [ready, setReady] = useState(false);
@@ -396,6 +416,8 @@ export function DeviceMap({
   // shown: the controller appears at its new point.
   const devices = (q.data ?? []).filter((d) => !d.relocatedTo);
   devicesRef.current = devices;
+  // Each area's outer rings by "stack:areaId", for the map's handlers (set below, once the areas are read).
+  const ringsRef = useRef(new Map<string, number[][][]>());
   const now = Date.now();
   const live = devices.filter((d) => now - d.lastUpdate < STALE_MS);
   const selected = selKey ? devices.find((d) => selKeyOf(d) === selKey) : undefined;
@@ -430,6 +452,7 @@ export function DeviceMap({
     m.on("moveend", () => {
       view.current = { center: m.getCenter(), zoom: m.getZoom() };
     });
+    m.on("zoomend", () => setZoom(m.getZoom()));
     // Attribution: our own "i" button below (closed until clicked).
     const popup = new maplibregl.Popup({
       closeButton: false,
@@ -460,6 +483,136 @@ export function DeviceMap({
           "line-width": ["interpolate", ["linear"], ["zoom"], 6, ["case", ["get", "selected"], 2.5, 1], 14, ["case", ["get", "selected"], 4, 2.5]],
           "line-opacity": ["case", ["get", "selected"], 1, 0.85],
         },
+      });
+      // Zoomed out an area is too small to see: a dot in its colour, and its
+      // name where there is room, until the outlines take over. Areas close
+      // together first merge into one larger circle with their count, which
+      // a click opens, as the devices' clusters do.
+      const areaInst: Record<string, unknown> = {};
+      instances.forEach((_, i) => {
+        areaInst[`c${i}`] = ["+", ["case", ["==", ["get", "inst"], i], 1, 0]];
+      });
+      m.addSource("area-points", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+        cluster: true,
+        clusterRadius: CLUSTER_RADIUS,
+        clusterMaxZoom: AREA_CLUSTER_MAX_ZOOM,
+        clusterProperties: areaInst as never,
+      });
+      // One stack's colour when the circle is all its areas; grey when it mixes several.
+      const areaClusterColor: unknown[] = ["case"];
+      instances.forEach((inst, i) => areaClusterColor.push(["==", ["get", `c${i}`], ["get", "point_count"]], resolveColor(color(inst.id))));
+      areaClusterColor.push(MIXED);
+      const areaClusterRadius = ["interpolate", ["linear"], ["get", "point_count"], 2, 14, 6, 18, 15, 23];
+      const isCluster = ["has", "point_count"];
+      m.addLayer({
+        id: "area-clusters-halo",
+        type: "circle",
+        source: "area-points",
+        filter: isCluster as never,
+        maxzoom: DEVICES_MIN_ZOOM,
+        paint: {
+          "circle-color": (instances.length ? areaClusterColor : MIXED) as never,
+          "circle-radius": ["+", areaClusterRadius, 7] as never,
+          "circle-opacity": 0.2,
+          "circle-blur": 0.35,
+        },
+      });
+      m.addLayer({
+        id: "area-clusters",
+        type: "circle",
+        source: "area-points",
+        filter: isCluster as never,
+        maxzoom: DEVICES_MIN_ZOOM,
+        paint: {
+          "circle-color": (instances.length ? areaClusterColor : MIXED) as never,
+          "circle-radius": areaClusterRadius as never,
+          "circle-opacity": 0.9,
+          "circle-stroke-color": dark ? "#18181b" : "#ffffff",
+          "circle-stroke-width": 2,
+        },
+      });
+      m.addLayer({
+        id: "area-cluster-count",
+        type: "symbol",
+        source: "area-points",
+        filter: isCluster as never,
+        maxzoom: DEVICES_MIN_ZOOM,
+        layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": FONT, "text-size": 12, "text-allow-overlap": true, "text-ignore-placement": true },
+        paint: { "text-color": "#ffffff" },
+      });
+      m.on("click", "area-clusters", async (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        // Frame every area in it, whole outlines included and clear of the
+        // floating summary, so each one is in view once they come apart.
+        const src = m.getSource("area-points") as maplibregl.GeoJSONSource;
+        const leaves = await src.getClusterLeaves(f.properties.cluster_id as number, Infinity, 0);
+        const b = new maplibregl.LngLatBounds();
+        for (const l of leaves) {
+          const rings = ringsRef.current.get(String(l.properties?.key));
+          if (rings) for (const ring of rings) for (const [lon, lat] of ring) b.extend([lon, lat]);
+          else b.extend((l.geometry as GeoJSON.Point).coordinates as [number, number]);
+        }
+        if (b.isEmpty()) return;
+        m.fitBounds(b, {
+          padding: window.innerWidth < 640 ? { top: 70, bottom: 30, left: 30, right: 30 } : { top: 60, bottom: 40, left: 300, right: 60 },
+          maxZoom: 13,
+          duration: 700,
+        });
+      });
+      m.on("mouseenter", "area-clusters", () => {
+        m.getCanvas().style.cursor = "pointer";
+      });
+      m.on("mouseleave", "area-clusters", () => {
+        m.getCanvas().style.cursor = "";
+      });
+      // An invisible, wider circle under each dot, so it is easy to click.
+      m.addLayer({
+        id: "area-hit",
+        type: "circle",
+        source: "area-points",
+        filter: ["!", isCluster] as never,
+        maxzoom: DEVICES_MIN_ZOOM,
+        paint: { "circle-color": "#000000", "circle-radius": 14, "circle-opacity": 0 },
+      });
+      m.addLayer({
+        id: "area-points",
+        type: "circle",
+        source: "area-points",
+        filter: ["!", isCluster] as never,
+        maxzoom: DEVICES_MIN_ZOOM,
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 8, 6],
+          "circle-stroke-color": dark ? "#18181b" : "#ffffff",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 0.9,
+        },
+      });
+      m.addLayer({
+        id: "area-names",
+        type: "symbol",
+        source: "area-points",
+        filter: ["!", isCluster] as never,
+        minzoom: 5,
+        maxzoom: DEVICES_MIN_ZOOM,
+        layout: { "text-field": ["get", "name"], "text-font": FONT, "text-size": 11, "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true },
+        paint: { "text-color": dark ? "#e4e4e7" : "#27272a", "text-halo-color": dark ? "#18181b" : "#ffffff", "text-halo-width": 1.5 },
+      });
+      // A click on an area's dot selects it (and frames it), as on its outline.
+      m.on("click", "area-hit", (e) => {
+        const key = e.features?.[0]?.properties?.key;
+        if (typeof key !== "string") return;
+        setSelKey(undefined);
+        setSelArea(key);
+      });
+      m.on("mouseenter", "area-hit", () => {
+        m.getCanvas().style.cursor = "pointer";
+      });
+      m.on("mouseleave", "area-hit", () => {
+        m.getCanvas().style.cursor = "";
       });
       // A click on an area selects it (a device or cluster on top wins).
       m.on("click", "geofence-fill", (e) => {
@@ -614,6 +767,14 @@ export function DeviceMap({
         source: "selected",
         paint: { "circle-color": SELECTED, "circle-radius": 18, "circle-opacity": 0.3, "circle-blur": 0.6 },
       });
+      // Zoomed out, where the device itself is hidden: its dot inside the ring.
+      m.addLayer({
+        id: "selected-dot",
+        type: "circle",
+        source: "selected",
+        maxzoom: DEVICES_MIN_ZOOM,
+        paint: { "circle-color": ["get", "color"], "circle-radius": 6, "circle-stroke-color": dark ? "#18181b" : "#ffffff", "circle-stroke-width": 1.5 },
+      });
       m.addLayer({
         id: "selected-ring",
         type: "circle",
@@ -638,7 +799,7 @@ export function DeviceMap({
       m.on("click", (e) => {
         if (m.queryRenderedFeatures(e.point, { layers: [...DEVICE_LAYERS, "clusters"] }).length) return;
         setSelKey(undefined);
-        if (!m.queryRenderedFeatures(e.point, { layers: ["geofence-fill"] }).length) setSelArea(undefined);
+        if (!m.queryRenderedFeatures(e.point, { layers: ["geofence-fill", "area-hit", "area-clusters"] }).length) setSelArea(undefined);
       });
       // Dragging the map pauses following; the card can resume it.
       m.on("dragstart", () => setFollowing(false));
@@ -707,17 +868,32 @@ export function DeviceMap({
     });
     const stroke = dark ? "#18181b" : "#ffffff";
     m.once("styledata", () => {
-      for (const id of ["clusters", "devices"]) if (m.getLayer(id)) m.setPaintProperty(id, "circle-stroke-color", stroke);
+      for (const id of ["clusters", "devices", "area-clusters", "area-points", "selected-dot"]) if (m.getLayer(id)) m.setPaintProperty(id, "circle-stroke-color", stroke);
+      if (m.getLayer("area-names")) {
+        m.setPaintProperty("area-names", "text-color", dark ? "#e4e4e7" : "#27272a");
+        m.setPaintProperty("area-names", "text-halo-color", stroke);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dark]);
 
+  /** Each area's outer rings, with a point to group it by (its first corner). */
+  const areaShapes = (fences.data ?? []).flatMap((s) =>
+    s.areas.map((a) => {
+      const rings = ((a.geometry.type === "Polygon" ? [a.geometry.coordinates] : a.geometry.coordinates) as number[][][][]).map((p) => p[0]);
+      const [lon, lat] = rings[0]?.[0] ?? [0, 0];
+      return { key: `${s.id}:${a.id}`, lat, lon, rings };
+    }),
+  );
+  ringsRef.current = new Map(areaShapes.map((a) => [a.key, a.rings]));
+  // The areas when there are any (the map's first view), else the devices.
   const fit = () => {
-    const pts = mainGroup(live.length ? live : devices);
-    if (!pts.length || !map.current) return;
-    map.current.resize();
+    if (!map.current) return;
     const b = new maplibregl.LngLatBounds();
-    for (const d of pts) b.extend([d.lon, d.lat]);
+    if (areaShapes.length) for (const a of mainGroup(areaShapes)) for (const ring of a.rings) for (const [lon, lat] of ring) b.extend([lon, lat]);
+    else for (const d of mainGroup(live.length ? live : devices)) b.extend([d.lon, d.lat]);
+    if (b.isEmpty()) return;
+    map.current.resize();
     // Extra room at the top for the floating summary, so it covers no device.
     map.current.fitBounds(b, {
       padding: window.innerWidth < 640 ? { top: 70, bottom: 30, left: 30, right: 30 } : { top: 120, bottom: 50, left: 50, right: 50 },
@@ -755,12 +931,25 @@ export function DeviceMap({
           };
         }),
     });
-    if (!fitted.current && devices.length) {
-      fit();
-      fitted.current = true;
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, q.data, instances, color, dark]);
+
+  // The first view: once what it frames has arrived (the areas, when there are any).
+  useEffect(() => {
+    if (!ready || fitted.current) return;
+    if (withAreas && !fences.data && !fences.error) return;
+    if (!areaShapes.length && withDevices && !devices.length) return;
+    fit();
+    fitted.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, fences.data, fences.error, q.data]);
+
+  // The devices only from DEVICES_MIN_ZOOM on while there are areas to show.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    for (const id of ZOOMED_LAYERS) if (m.getLayer(id)) m.setLayerZoomRange(id, gated ? DEVICES_MIN_ZOOM : 0, 24);
+  }, [ready, gated]);
 
   useEffect(() => {
     const src = map.current?.getSource("geofences") as maplibregl.GeoJSONSource | undefined;
@@ -779,6 +968,28 @@ export function DeviceMap({
             color: s.rotom ? resolveColor(color(s.rotom)) : "#9ca3af",
           },
         })),
+      ),
+    });
+    // Each area's dot: the middle of its outline's corners.
+    (map.current?.getSource("area-points") as maplibregl.GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: (fences.data ?? []).flatMap((s) =>
+        s.areas.map((a) => {
+          const ring = ((a.geometry.type === "Polygon" ? [a.geometry.coordinates] : a.geometry.coordinates) as number[][][][])[0]?.[0] ?? [];
+          const lon = ring.reduce((n, p) => n + p[0], 0) / (ring.length || 1);
+          const lat = ring.reduce((n, p) => n + p[1], 0) / (ring.length || 1);
+          return {
+            type: "Feature" as const,
+            geometry: { type: "Point" as const, coordinates: [lon, lat] },
+            properties: {
+              key: `${s.id}:${a.id}`,
+              name: a.name,
+              color: s.rotom ? resolveColor(color(s.rotom)) : "#9ca3af",
+              // Its Rotom's place in `instances`, for the circles' colour.
+              inst: s.rotom ? instances.findIndex((i) => i.id === s.rotom) : -1,
+            },
+          };
+        }),
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -856,7 +1067,15 @@ export function DeviceMap({
     if (!m || !ready || !src) return;
     src.setData({
       type: "FeatureCollection",
-      features: selected ? [{ type: "Feature", geometry: { type: "Point", coordinates: [selected.lon, selected.lat] }, properties: {} }] : [],
+      features: selected
+        ? [
+            {
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [selected.lon, selected.lat] },
+              properties: { color: selected.rotom && Date.now() - selected.lastUpdate < STALE_MS ? resolveColor(color(selected.rotom.instanceId)) : "#9ca3af" },
+            },
+          ]
+        : [],
     });
     if (!selected || !following) return;
     if (firstFollow.current !== selKey) {
@@ -913,56 +1132,81 @@ export function DeviceMap({
         {/* Floating column, top left: the summary and, on wide screens, the
             selected controller below it (on a phone that card goes under the map). */}
         <div className="absolute top-3 left-3 flex max-w-[calc(100%-4.5rem)] flex-col gap-2 sm:w-64 sm:max-w-[calc(100%-7rem)]">
-          <div className="map-glass pointer-events-none flex flex-col gap-2 rounded-lg px-3 py-2 sm:px-3.5 sm:py-2.5">
-            <span className="hidden sm:block">
-              <Label>Devices</Label>
-            </span>
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-lg leading-none font-bold tabular-nums sm:text-2xl">{live.length}</span>
-              <span className="text-xs text-muted-foreground">
-                scanning
-                {devices.length > live.length ? ` · ${devices.length - live.length} inactive` : ""}
+          {/* Zoomed out (or without Golbat) the map is about the areas, so is the summary. */}
+          {!withDevices || (gated && zoom < DEVICES_MIN_ZOOM) ? (
+            <div className="map-glass pointer-events-none flex flex-col gap-2 rounded-lg px-3 py-2 sm:px-3.5 sm:py-2.5">
+              <span className="hidden sm:block">
+                <Label>Areas</Label>
               </span>
-              {/* Phone: the per-Rotom counts fit on the same line, as dots. */}
-              <span className="inline-flex items-center gap-2 text-xs sm:hidden">
-                {perInstance.map(({ i, n }) => (
-                  <span key={i.id} className="inline-flex items-center gap-1" title={i.name}>
-                    <span className="size-2 rounded-full" style={{ background: color(i.id) }} />
-                    <span className="font-semibold tabular-nums">{n}</span>
-                  </span>
-                ))}
-              </span>
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-lg leading-none font-bold tabular-nums sm:text-2xl">{fmt.int(areaCount)}</span>
+                <span className="text-xs text-muted-foreground">enabled{gated ? " · zoom in for the devices" : ""}</span>
+              </div>
+              {/* Per stack, only when there is more than one to tell apart. */}
+              {(fences.data?.length ?? 0) > 1 ? (
+                <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
+                  {fences.data!.map((st) => (
+                    <span key={st.id} className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full ring-2 ring-white/70 dark:ring-black/40" style={{ background: st.rotom ? color(st.rotom) : "#9ca3af" }} />
+                      <span className="text-muted-foreground">{st.name}</span>
+                      <span className="font-semibold tabular-nums">{st.areas.length}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
-            {perInstance.length || unknown ? (
-              <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
-                {perInstance.map(({ i, n }) => (
-                  <span key={i.id} className="inline-flex items-center gap-1.5">
-                    <span className="size-2 rounded-full ring-2 ring-white/70 dark:ring-black/40" style={{ background: color(i.id) }} />
-                    <span className="text-muted-foreground">{i.name}</span>
-                    <span className="font-semibold tabular-nums">{n}</span>
-                  </span>
-                ))}
-                {unknown ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-muted-foreground/60" />
-                    <span className="text-muted-foreground">no Rotom</span>
-                    <span className="font-semibold tabular-nums">{unknown}</span>
-                  </span>
-                ) : null}
+          ) : (
+            <div className="map-glass pointer-events-none flex flex-col gap-2 rounded-lg px-3 py-2 sm:px-3.5 sm:py-2.5">
+              <span className="hidden sm:block">
+                <Label>Devices</Label>
+              </span>
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-lg leading-none font-bold tabular-nums sm:text-2xl">{live.length}</span>
+                <span className="text-xs text-muted-foreground">
+                  scanning
+                  {devices.length > live.length ? ` · ${devices.length - live.length} inactive` : ""}
+                </span>
+                {/* Phone: the per-Rotom counts fit on the same line, as dots. */}
+                <span className="inline-flex items-center gap-2 text-xs sm:hidden">
+                  {perInstance.map(({ i, n }) => (
+                    <span key={i.id} className="inline-flex items-center gap-1" title={i.name}>
+                      <span className="size-2 rounded-full" style={{ background: color(i.id) }} />
+                      <span className="font-semibold tabular-nums">{n}</span>
+                    </span>
+                  ))}
+                </span>
               </div>
-            ) : null}
-            {shaped.length ? (
-              <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
-                {shaped.map((x) => (
-                  <span key={x.shape} className="inline-flex items-center gap-1.5">
-                    <ShapeIcon shape={x.shape} className="text-muted-foreground" />
-                    <span className="text-muted-foreground">{x.label}</span>
-                    <span className="font-semibold tabular-nums">{x.n}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </div>
+              {perInstance.length || unknown ? (
+                <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
+                  {perInstance.map(({ i, n }) => (
+                    <span key={i.id} className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full ring-2 ring-white/70 dark:ring-black/40" style={{ background: color(i.id) }} />
+                      <span className="text-muted-foreground">{i.name}</span>
+                      <span className="font-semibold tabular-nums">{n}</span>
+                    </span>
+                  ))}
+                  {unknown ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-muted-foreground/60" />
+                      <span className="text-muted-foreground">no Rotom</span>
+                      <span className="font-semibold tabular-nums">{unknown}</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+              {shaped.length ? (
+                <div className="hidden flex-wrap gap-x-3 gap-y-1 text-xs sm:flex">
+                  {shaped.map((x) => (
+                    <span key={x.shape} className="inline-flex items-center gap-1.5">
+                      <ShapeIcon shape={x.shape} className="text-muted-foreground" />
+                      <span className="text-muted-foreground">{x.label}</span>
+                      <span className="font-semibold tabular-nums">{x.n}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
           {area ? (
             <AreaCard
               className="hidden sm:flex"
@@ -993,8 +1237,8 @@ export function DeviceMap({
         <button
           type="button"
           onClick={fit}
-          disabled={!devices.length}
-          aria-label="Fit the map to the devices"
+          disabled={!devices.length && !areaShapes.length}
+          aria-label={areaShapes.length ? "Fit the map to the areas" : "Fit the map to the devices"}
           className="map-glass absolute top-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors hover:text-foreground disabled:opacity-50 sm:px-2.5 [&>svg]:size-3.5"
         >
           <Crosshair />
@@ -1002,11 +1246,11 @@ export function DeviceMap({
         </button>
 
         <Attribution html={basemap?.attribution || DEFAULT_ATTRIBUTION} />
-        {q.error ? (
+        {(withDevices && q.error) || (!withDevices && fences.error) ? (
           <div className="absolute inset-0 grid place-items-center bg-background/70 text-sm text-red-300">
-            {(q.error as Error).message}
+            {((withDevices ? q.error : fences.error) as Error).message}
           </div>
-        ) : !q.data ? (
+        ) : (withDevices ? !q.data : !fences.data) ? (
           <div className="absolute inset-0 grid place-items-center">
             <Spinner />
           </div>

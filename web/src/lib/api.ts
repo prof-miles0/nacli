@@ -220,11 +220,13 @@ export const endpoints = {
     q: string;
     stack?: string;
     inUse?: boolean;
+    status?: string;
   }) => {
     const q = new URLSearchParams({ page: String(p.page), per_page: String(p.perPage), sort_by: p.sortBy, order: p.order });
     if (p.q) q.set("q", p.q);
     if (p.stack) q.set("stack", p.stack);
     if (p.inUse !== undefined) q.set("in_use", String(p.inUse));
+    if (p.status) q.set("status", p.status);
     return api<DragoniteAccountPage>(`/dragonite-accounts?${q}`);
   },
   accounts: (id: string, p: { page: number; perPage: number; sortBy: string; order: "asc" | "desc"; q: string }) => {

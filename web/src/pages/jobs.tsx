@@ -54,7 +54,7 @@ function JobsDisabled({ instances, color }: { instances: InstanceInfo[]; color: 
           <h2 className="text-lg font-semibold">Jobs are not enabled</h2>
           <p className="text-sm text-muted-foreground">
             Jobs let you run commands on devices from here, such as restarting an app or clearing its cache.
-            They are enabled in each instance's <code className="text-foreground">rotom-ng.toml</code>.
+            They are enabled in each RotomNG's <code className="text-foreground">config.toml</code>.
           </p>
         </div>
 
@@ -73,7 +73,7 @@ function JobsDisabled({ instances, color }: { instances: InstanceInfo[]; color: 
 
         <div className="w-full text-left">
           <div className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            To enable them, in rotom-ng.toml
+            To enable them, in RotomNG's config.toml
           </div>
           <pre className="overflow-x-auto rounded-lg border bg-background/70 px-4 py-3 font-mono text-xs leading-5">
             <span className="text-sky-300">[jobs]</span>

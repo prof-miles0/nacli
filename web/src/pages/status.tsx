@@ -452,25 +452,26 @@ function GolbatCard({ g }: { g: NonNullable<SystemStatus["golbat"]> }) {
   const fresh = g.lastSeenS != null && g.lastSeenS < 120;
   return (
     <Card className="gap-1 p-4">
-      <div className="flex flex-col divide-y divide-border/60">
+      {/* One column per check, split by lines: across on phones, down on wider screens. */}
+      <div className="flex flex-col divide-y divide-border/60 md:flex-row md:divide-x md:divide-y-0 [&>*]:min-w-0 [&>*]:flex-1 md:[&>*]:px-5 md:[&>*:first-child]:pl-0 md:[&>*:last-child]:pr-0">
         {g.api ? (
-          <Row label="API" level={g.apiOk ? "ok" : "error"} value={g.apiOk ? <span className="text-green-400">Answering</span> : "Not answering"} detail={g.apiOk ? undefined : g.apiError} />
+          <Row label="API" level={g.apiOk ? "ok" : "error"} value={g.apiOk ? <span className="text-green-400">Healthy · {g.apiLatencyMs} ms</span> : "Not answering"} detail={g.apiOk ? undefined : g.apiError} />
         ) : null}
         {g.metrics ? (
-          <>
-            <Row
-              label="Metrics"
-              level={fresh ? "ok" : "error"}
-              value={g.lastSeenS == null ? "None" : fresh ? "Fresh" : "Stale"}
-              detail={g.lastSeenS != null ? `last sample ${fmt.duration(g.lastSeenS * 1000)} ago` : undefined}
-            />
-            <Row
-              label="Raw data · 1h"
-              level={g.rawErrors ? "warn" : "ok"}
-              value={<span className="tabular-nums">{fmt.int(g.rawOk ?? 0)} ok</span>}
-              detail={g.rawErrors ? `${fmt.int(g.rawErrors)} with errors` : undefined}
-            />
-          </>
+          <Row
+            label="Metrics"
+            level={fresh ? "ok" : "error"}
+            value={g.lastSeenS == null ? "None" : fresh ? "Fresh" : "Stale"}
+            detail={g.lastSeenS != null ? `last sample ${fmt.duration(g.lastSeenS * 1000)} ago` : undefined}
+          />
+        ) : null}
+        {g.metrics ? (
+          <Row
+            label="Raw data · 1h"
+            level={g.rawErrors ? "warn" : "ok"}
+            value={<span className="tabular-nums">{fmt.int(g.rawOk ?? 0)} ok</span>}
+            detail={g.rawErrors ? `${fmt.int(g.rawErrors)} with errors` : undefined}
+          />
         ) : null}
       </div>
     </Card>
@@ -565,9 +566,7 @@ export function StatusPage() {
       {data.golbat ? (
         <>
           <SectionTitle>Golbat</SectionTitle>
-          <div className="grid gap-3 md:grid-cols-2">
-            <GolbatCard g={data.golbat} />
-          </div>
+          <GolbatCard g={data.golbat} />
         </>
       ) : null}
       {data.zapdos.configured ? (
@@ -576,10 +575,15 @@ export function StatusPage() {
           <ZapdosCard z={data.zapdos} />
         </>
       ) : null}
-      <p className="text-[11px] text-muted-foreground">
-        Checked {fmt.ago(data.checkedAt)} · updates every 15 s · Dragonite and RotomNG releases from GitHub{data.releases?.checkedAt ? `, checked ${fmt.ago(data.releases.checkedAt)}` : ""}. Rate-limit
-        drops are the ones seen since Nacli started.
-      </p>
+      <footer className="mt-2 flex flex-col items-center gap-1 border-t border-border/60 pt-4 text-center text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <RefreshCw className="size-3" />
+          Checked {fmt.ago(data.checkedAt)} · updates every 15 s
+        </span>
+        <span>
+          Releases from GitHub{data.releases?.checkedAt ? `, checked ${fmt.ago(data.releases.checkedAt)}` : ""} · rate-limit drops since Nacli started
+        </span>
+      </footer>
     </div>
   );
 }

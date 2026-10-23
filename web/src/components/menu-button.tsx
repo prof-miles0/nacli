@@ -1,4 +1,4 @@
-import { type LucideIcon, MoreHorizontal } from "lucide-react";
+import { ChevronDown, type LucideIcon, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
@@ -22,7 +22,20 @@ export interface MenuItem {
  * what it acts on, in a portal so a table's overflow cannot clip it, and
  * opening upwards when there is no room below.
  */
-export function MenuButton({ kind, subject, items }: { kind: string; subject: string; items: MenuItem[] }) {
+export function MenuButton({
+  kind,
+  subject,
+  items,
+  label,
+  disabled,
+}: {
+  kind: string;
+  subject: string;
+  items: MenuItem[];
+  /** A labelled button (e.g. "All areas") instead of the "…" icon. */
+  label?: string;
+  disabled?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number }>();
   const ref = useRef<HTMLDivElement>(null);
@@ -60,9 +73,16 @@ export function MenuButton({ kind, subject, items }: { kind: string; subject: st
 
   return (
     <div ref={ref} className="relative inline-block">
-      <Button variant="ghost" size="icon" className="size-8" aria-label={`Options for ${subject}`} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
-        <MoreHorizontal />
-      </Button>
+      {label ? (
+        <Button variant="outline" aria-haspopup="menu" aria-expanded={open} onClick={toggle} disabled={disabled}>
+          {label}
+          <ChevronDown className={cn("transition-transform", open && "rotate-180")} />
+        </Button>
+      ) : (
+        <Button variant="ghost" size="icon" className="size-8" aria-label={`Options for ${subject}`} aria-haspopup="menu" aria-expanded={open} onClick={toggle} disabled={disabled}>
+          <MoreHorizontal />
+        </Button>
+      )}
       {open && pos
         ? createPortal(
             <div
@@ -81,9 +101,13 @@ export function MenuButton({ kind, subject, items }: { kind: string; subject: st
                   role="menuitem"
                   disabled={a.disabled}
                   className={cn(
-                    "flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0",
-                    a.danger && "text-red-400",
-                    a.positive && "text-green-400",
+                    // The hover shade is the option's own tone, so it shows over the popover.
+                    "flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent [&>svg]:mt-0.5 [&>svg]:size-4 [&>svg]:shrink-0",
+                    a.danger
+                      ? "text-red-400 hover:bg-red-500/15 hover:text-red-300"
+                      : a.positive
+                        ? "text-green-400 hover:bg-green-500/15 hover:text-green-300"
+                        : "hover:bg-foreground/10",
                   )}
                   onClick={() => {
                     setOpen(false);

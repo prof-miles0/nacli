@@ -35,6 +35,13 @@ export function AreaMap({ layers, basemap, className }: { layers: MapLayer[]; ba
     m.fitBounds(bounds.current, { padding: 40, maxZoom: 16, duration: 0 });
   };
   const [hidden, setHidden] = useState<Set<string>>(() => new Set(layers.filter((l) => l.hidden).map((l) => l.key)));
+  // A layer that arrives later (e.g. spawnpoints, loaded apart) still starts hidden when it asks to.
+  const seen = useRef(new Set(layers.map((l) => l.key)));
+  useEffect(() => {
+    const fresh = layers.filter((l) => !seen.current.has(l.key));
+    for (const l of fresh) seen.current.add(l.key);
+    if (fresh.some((l) => l.hidden)) setHidden((h) => new Set([...h, ...fresh.filter((l) => l.hidden).map((l) => l.key)]));
+  }, [layers]);
   const dark = isDark();
   // Redrawn only when the shapes change, not on every render of the form.
   const sig = useMemo(() => {

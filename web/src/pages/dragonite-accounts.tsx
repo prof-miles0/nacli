@@ -1,8 +1,9 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Plus, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { AccountCounts, AccountLevelCounts, DragoniteAccount, DragoniteInfo } from "@shared/types";
-import { CreateAccountModal, ImportAccountsModal } from "@/components/account-forms";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, KeyRound, ListFilter, Plus } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { type AccountCounts, type AccountLevelCounts, type AccountState, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
+import { AddAccountsModal } from "@/components/account-forms";
 import { StackTag } from "@/components/stack-tag";
 import { SearchBox } from "@/components/table-tools";
 import { AccentCard, Badge, Button, Card, HoverCard, Label, Spinner, StackBar, Table } from "@/components/ui";
@@ -250,16 +251,139 @@ function LevelCard() {
   );
 }
 
+/** Each account state's name and badge tone, worst first. */
+const STATES: Record<AccountState, { label: string; tone: "good" | "warn" | "bad" | "info" | "violet" | "neutral" }> = {
+  banned: { label: "Banned", tone: "bad" },
+  auth_banned: { label: "Login ban", tone: "bad" },
+  invalid: { label: "Invalid", tone: "bad" },
+  suspended: { label: "Suspended", tone: "warn" },
+  warned: { label: "Warned", tone: "warn" },
+  disabled: { label: "Disabled", tone: "neutral" },
+  in_use: { label: "In use", tone: "violet" },
+  available: { label: "Available", tone: "good" },
+};
+
 /** The state that best describes an account, worst first. */
-function accountStatus(a: DragoniteAccount): { label: string; tone: "good" | "warn" | "bad" | "info" | "violet" | "neutral" } {
-  if (a.banned) return { label: "Banned", tone: "bad" };
-  if (a.auth_banned) return { label: "Login ban", tone: "bad" };
-  if (a.invalid) return { label: "Invalid", tone: "bad" };
-  if (a.suspended) return { label: "Suspended", tone: "warn" };
-  if (a.warn) return { label: "Warned", tone: "warn" };
-  if (a.disabled) return { label: "Disabled", tone: "neutral" };
-  if (a.in_use) return { label: "In use", tone: "violet" };
-  return { label: "Available", tone: "good" };
+const accountStatus = (a: DragoniteAccount) => STATES[accountState(a)];
+
+/** Each state's colour, from the breakdown above (Available is its "good"). */
+const stateColor = (k: AccountState) => STATUSES.find((x) => x.key === (k === "available" ? "good" : k))?.color ?? "var(--muted-foreground)";
+
+/**
+ * Pick one account state: only those some account is in, each with its
+ * colour, its count and its share of the list.
+ */
+function StateFilter({ value, counts, onChange }: { value: string; counts?: Partial<Record<AccountState, number>>; onChange: (v: string) => void }) {
+  const [pos, setPos] = useState<{ top: number; left: number; width: number }>();
+  const ref = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const open = !!pos;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setPos(undefined);
+    };
+    const dismiss = () => setPos(undefined);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPos(undefined);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [open]);
+
+  const total = Object.values(counts ?? {}).reduce((n, x) => n + (x ?? 0), 0);
+  const shown = (Object.keys(STATES) as AccountState[]).filter((k) => counts?.[k] || k === value);
+  // A single state leaves nothing to filter.
+  if (shown.length < 2 && !value) return null;
+  const current = value ? (value as AccountState) : undefined;
+
+  const toggle = () => {
+    if (open) return setPos(undefined);
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = Math.max(r.width, 224);
+    setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - width - 8), width });
+  };
+  const pick = (v: string) => {
+    setPos(undefined);
+    onChange(v);
+  };
+  const item = (key: string, label: string, n: number, color?: string) => {
+    const on = key === value;
+    return (
+      <button
+        key={key}
+        type="button"
+        role="option"
+        aria-selected={on}
+        onClick={() => pick(key)}
+        className={cn("flex w-full flex-col gap-1 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent", on && "bg-accent/60")}
+      >
+        <span className="flex w-full items-center gap-2 text-sm">
+          {color ? <span className="size-2.5 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px ${color}26` }} /> : <ListFilter className="size-3.5 shrink-0 text-muted-foreground" />}
+          <span className={cn("flex-1 truncate", on && "font-medium")}>{label}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">{fmt.int(n)}</span>
+          <Check className={cn("size-3.5 shrink-0", on ? "text-foreground" : "invisible")} />
+        </span>
+        {color && total ? (
+          <span className="ml-[18px] mr-[22px] h-1 overflow-hidden rounded-full bg-muted">
+            <span className="block h-full rounded-full" style={{ width: `${Math.max(2, (n / total) * 100)}%`, background: color }} />
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Account state"
+        onClick={toggle}
+        className={cn(
+          "inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm transition-colors hover:bg-accent",
+          open && "ring-2 ring-ring/50",
+        )}
+        style={current ? { borderColor: `${stateColor(current)}80` } : undefined}
+      >
+        {current ? (
+          <span className="size-2.5 rounded-full" style={{ background: stateColor(current), boxShadow: `0 0 0 3px ${stateColor(current)}26` }} />
+        ) : (
+          <ListFilter className="size-3.5 text-muted-foreground" />
+        )}
+        {current ? STATES[current].label : "All states"}
+        {counts ? (
+          <span className="hidden rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground tabular-nums sm:inline">{fmt.int(current ? (counts[current] ?? 0) : total)}</span>
+        ) : null}
+        <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {pos
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="listbox"
+              style={{ top: pos.top, left: pos.left, width: pos.width }}
+              className="animate-in fixed z-50 flex flex-col gap-0.5 rounded-lg border bg-popover p-1 shadow-xl"
+            >
+              {item("", "All states", total)}
+              <div className="my-0.5 border-t" />
+              {shown.map((k) => item(k, STATES[k].label, counts?.[k] ?? 0, stateColor(k)))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
 }
 
 const SORTS = [
@@ -286,6 +410,8 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
+  // One state only ("" = all); the choices come with the server's counts.
+  const [status, setStatus] = useState("");
   // Search as you type, but only ask Dragonite once typing pauses.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -297,8 +423,8 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
 
   const perPage = 10;
   const list = useQuery({
-    queryKey: ["accounts-all", inUse, page, sortBy, order, q],
-    queryFn: () => endpoints.allAccounts({ page, perPage, sortBy, order, q, inUse }),
+    queryKey: ["accounts-all", inUse, page, sortBy, order, q, status],
+    queryFn: () => endpoints.allAccounts({ page, perPage, sortBy, order, q, inUse, status }),
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   });
@@ -339,7 +465,13 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
           {title}
           {data ? <span className="text-sm font-normal text-muted-foreground tabular-nums">{fmt.int(data.total)}</span> : null}
         </h2>
-        <SearchBox value={search} onChange={setSearch} placeholder="Search username…" />
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          {/* The search, then the state at its right; on phones the search fills the row. */}
+          <div className="min-w-0 flex-1 sm:flex-none">
+            <SearchBox value={search} onChange={setSearch} placeholder="Search username…" />
+          </div>
+          <StateFilter value={status} counts={data?.states} onChange={(v) => (setStatus(v), setPage(0))} />
+        </div>
       </div>
       {list.error ? (
         <p className="text-sm text-red-300">{(list.error as Error).message}</p>
@@ -509,7 +641,7 @@ export function DragoniteAccountsPage() {
   const color = useInstanceColor();
   const dragonites = app?.dragonite ?? [];
   const withApi = dragonites.filter((d) => d.accounts);
-  const [adding, setAdding] = useState<"create" | "import">();
+  const [adding, setAdding] = useState(false);
 
   if (!app) return <Spinner className="mx-auto mt-20" />;
 
@@ -517,18 +649,13 @@ export function DragoniteAccountsPage() {
     <div className="animate-in flex flex-col gap-6">
       {withApi.length ? (
         <div className="-mb-2 flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={() => setAdding("import")}>
-            <Upload />
-            Import accounts
-          </Button>
-          <Button onClick={() => setAdding("create")}>
+          <Button onClick={() => setAdding(true)}>
             <Plus />
-            Create account
+            Add
           </Button>
         </div>
       ) : null}
-      {adding === "create" ? <CreateAccountModal stacks={withApi} onClose={() => setAdding(undefined)} /> : null}
-      {adding === "import" ? <ImportAccountsModal stacks={withApi} onClose={() => setAdding(undefined)} /> : null}
+      {adding ? <AddAccountsModal stacks={withApi} onClose={() => setAdding(false)} /> : null}
       {withApi.length > 1 ? <DuplicatesCard stacks={withApi} /> : null}
       <div className={cn("grid gap-4", dragonites.length > 1 && "lg:grid-cols-2")}>
         {dragonites.map((d) => (

@@ -396,6 +396,22 @@ export interface DragoniteAccountPage {
   total: number;
   pages: number;
   rows: DragoniteAccount[];
+  /** How many of the listed accounts (before ?status=) are in each state. */
+  states?: Partial<Record<AccountState, number>>;
+}
+
+/** The one state that best describes an account, worst first (as its Status column shows). */
+export type AccountState = "banned" | "auth_banned" | "invalid" | "suspended" | "warned" | "disabled" | "in_use" | "available";
+
+export function accountState(a: DragoniteAccount): AccountState {
+  if (a.banned) return "banned";
+  if (a.auth_banned) return "auth_banned";
+  if (a.invalid) return "invalid";
+  if (a.suspended) return "suspended";
+  if (a.warn) return "warned";
+  if (a.disabled) return "disabled";
+  if (a.in_use) return "in_use";
+  return "available";
 }
 
 export interface DragoniteLiveWorker {
@@ -802,6 +818,8 @@ export interface SystemStatus {
     rawErrors?: number;
     api: boolean;
     apiOk?: boolean;
+    /** How long its /api/health took. */
+    apiLatencyMs?: number;
     apiError?: string;
   };
   /** Zapdos (its VictoriaMetrics): whether it answers, and which instances it has data for. */

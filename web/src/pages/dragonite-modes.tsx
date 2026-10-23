@@ -249,7 +249,7 @@ function StackModes({
         </div>
         <Button size="sm" className="shrink-0" onClick={() => setEditing("new")}>
           <Plus />
-          New mode
+          New
         </Button>
       </div>
 

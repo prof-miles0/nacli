@@ -17,6 +17,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY shared ./shared
+# The histories kept in memory are saved here ([server] state_file); mount a
+# volume to keep them across container recreations.
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 7080
 # /api/auth/me answers without a session; assumes the default listen port.

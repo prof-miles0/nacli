@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CirclePlus, Copy, Lock, Plus, Power, PowerOff, Trash2, Upload, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import type { DragoniteInfo, ProxyEntry, ProxyImportResult, ProxyInstance } from "@shared/types";
 import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
@@ -8,7 +8,7 @@ import { type MenuItem, MenuButton } from "@/components/menu-button";
 import { StackTag } from "@/components/stack-tag";
 import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
 import { toast } from "@/components/toaster";
-import { Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
+import { AddChoice, Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
@@ -74,8 +74,7 @@ export function DragoniteProxiesPage() {
   };
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
-  const [importing, setImporting] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<{ p: ProxyEntry; i: ProxyInstance }>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [copying, setCopying] = useState(false);
@@ -262,13 +261,9 @@ export function DragoniteProxiesPage() {
         <SearchBox value={search} onChange={setSearch} placeholder="Search proxy or name…" />
         <div className="flex flex-wrap items-center gap-2">
           <Toggle value={filter} onChange={setFilter} options={FILTERS} />
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+          <Button size="sm" onClick={() => setAdding(true)}>
             <Plus />
-            New proxy
-          </Button>
-          <Button size="sm" onClick={() => setImporting(true)}>
-            <Upload />
-            Import
+            Add
           </Button>
         </div>
       </div>
@@ -417,8 +412,7 @@ export function DragoniteProxiesPage() {
         </Table>
       )}
 
-      {creating ? <CreateModal stacks={stacks} proxies={q.data?.proxies ?? []} onClose={() => setCreating(false)} onDone={refresh} /> : null}
-      {importing ? <ImportModal stacks={stacks} onClose={() => setImporting(false)} onDone={refresh} /> : null}
+      {adding ? <AddModal stacks={stacks} proxies={q.data?.proxies ?? []} onClose={() => setAdding(false)} onDone={refresh} /> : null}
       {removing ? (
         <Modal
           open
@@ -471,7 +465,37 @@ function countLines(text: string) {
   return { ok, bad };
 }
 
-function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onClose: () => void; onDone: () => void }) {
+/** "Add": one proxy with its own name, or a list imported at once; the choice sits at the top. */
+function AddModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteInfo[]; proxies: ProxyEntry[]; onClose: () => void; onDone: () => void }) {
+  const [kind, setKind] = useState<"one" | "import">("one");
+  const [switched, setSwitched] = useState(false);
+  const choice = (
+    <AddChoice
+      value={kind}
+      onChange={(v) => {
+        setKind(v);
+        setSwitched(true);
+      }}
+      options={[
+        { value: "one", label: "One proxy", hint: "With its own name", icon: <Plus /> },
+        { value: "import", label: "Import several", hint: "One proxy per line", icon: <Upload /> },
+      ]}
+    />
+  );
+  return kind === "one" ? (
+    <CreateModal stacks={stacks} proxies={proxies} onClose={onClose} onDone={onDone} choice={choice} still={switched} />
+  ) : (
+    <ImportModal stacks={stacks} onClose={onClose} onDone={onDone} choice={choice} still={switched} />
+  );
+}
+
+/** What AddModal passes each form: its choice on top, and no entrance animation after a switch. */
+interface Chosen {
+  choice: ReactNode;
+  still: boolean;
+}
+
+function ImportModal({ stacks, onClose, onDone, choice, still }: { stacks: DragoniteInfo[]; onClose: () => void; onDone: () => void } & Chosen) {
   const [text, setText] = useState("");
   const [targets, setTargets] = useState<string[]>(stacks.map((d) => d.id));
   const multi = stacks.length > 1;
@@ -509,8 +533,9 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
     <Modal
       open
       wide
+      still={still}
       onClose={onClose}
-      title="Import proxies"
+      title="Add proxies"
       footer={
         results ? (
           <Button onClick={onClose}>Close</Button>
@@ -531,6 +556,7 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
         )
       }
     >
+      {results ? null : choice}
       {results ? (
         <div className="flex flex-col gap-2 text-sm">
           {results.map((r) => (
@@ -626,7 +652,7 @@ function StackPicker({ stacks, value, onChange, note }: { stacks: DragoniteInfo[
 const ADDRESS = /^[^:@\s]+:\d{1,5}$/;
 
 /** One proxy with its own name, in one or several stacks (the admin's "Create"). */
-function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteInfo[]; proxies: ProxyEntry[]; onClose: () => void; onDone: () => void }) {
+function CreateModal({ stacks, proxies, onClose, onDone, choice, still }: { stacks: DragoniteInfo[]; proxies: ProxyEntry[]; onClose: () => void; onDone: () => void } & Chosen) {
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [user, setUser] = useState("");
@@ -686,8 +712,10 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
   return (
     <Modal
       open
+      wide
+      still={still}
       onClose={onClose}
-      title="New proxy"
+      title="Add proxies"
       footer={
         results ? (
           <Button onClick={onClose}>Close</Button>
@@ -704,6 +732,7 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
         )
       }
     >
+      {results ? null : choice}
       {results ? (
         <div className="flex flex-col gap-2 text-sm">
           {results.map((r) => (

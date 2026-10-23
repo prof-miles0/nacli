@@ -184,9 +184,9 @@ export function problems(d: Draft) {
   return out;
 }
 
-export function Field({ label, error, hint, children }: { label: ReactNode; error?: string; hint?: string; children: ReactNode }) {
+export function Field({ label, error, hint, children, className }: { label: ReactNode; error?: string; hint?: string; children: ReactNode; className?: string }) {
   return (
-    <label className="flex min-w-0 flex-col gap-1.5">
+    <label className={cn("flex min-w-0 flex-col gap-1.5", className)}>
       {/* The hint (or the error) beside the label, not under the box: the fields stay one line tall. */}
       <span className="flex min-w-0 items-baseline gap-2">
         <Label>{label}</Label>
@@ -236,6 +236,8 @@ function Options({ children }: { children: ReactNode }) {
 
 /** Every tab lays its fields out on the same three columns on wide screens. */
 const COLS = "grid items-start gap-3 sm:grid-cols-3";
+/** The same, with two columns on phones too, for short fields. */
+const COLS2 = "grid grid-cols-2 items-start gap-3 sm:grid-cols-3";
 
 export function Points({ text, kind = "route", bare }: { text: string; kind?: "route" | "geofence"; bare?: boolean }) {
   let n = 0;
@@ -858,8 +860,8 @@ export function AreaFields({
             <Input type="number" min={0} value={d.pokemon.workers} onChange={(e) => set("pokemon", { workers: e.target.value })} />
           </Field>
           <Options>
-            <Tick label="Enable for Scout Mode" on={d.pokemon.scout} onChange={(v) => set("pokemon", { scout: v })} />
-            <Tick label="Populate Invasions" on={d.pokemon.invasion} onChange={(v) => set("pokemon", { invasion: v })} />
+            <Tick label="Scout Mode" on={d.pokemon.scout} onChange={(v) => set("pokemon", { scout: v })} />
+            <Tick label="Invasions" on={d.pokemon.invasion} onChange={(v) => set("pokemon", { invasion: v })} />
           </Options>
         </div>
         <div className={COLS}>
@@ -876,7 +878,8 @@ export function AreaFields({
             Pokémon and Fort modes are both off: no worker can switch to quests until one of them is on.
           </p>
         ) : null}
-        <div className={COLS}>
+        {/* Two short fields: side by side on phones too. */}
+        <div className={COLS2}>
           <Field label="Workers" error={errs["quest.workers"]} hint="0 = all">
             <Input type="number" min={0} value={d.quest.workers} onChange={(e) => set("quest", { workers: e.target.value })} />
           </Field>
@@ -899,8 +902,8 @@ export function AreaFields({
           </Field>
           <Options>
             <Tick label="Priority Raids" on={d.fort.prioRaid} onChange={(v) => set("fort", { prioRaid: v })} />
-            <Tick label="Scan Showcases" on={d.fort.showcase} onChange={(v) => set("fort", { showcase: v })} />
-            <Tick label="Populate Invasions" on={d.fort.invasion} onChange={(v) => set("fort", { invasion: v })} />
+            <Tick label="Showcases" on={d.fort.showcase} onChange={(v) => set("fort", { showcase: v })} />
+            <Tick label="Invasions" on={d.fort.invasion} onChange={(v) => set("fort", { invasion: v })} />
           </Options>
         </div>
         <div className={COLS}>
@@ -916,14 +919,15 @@ export function AreaFields({
         {d.rare.enabled && !d.fort.enabled ? (
           <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">It only runs while the Fort mode is on.</p>
         ) : null}
-        <div className={COLS}>
+        {/* Phones: workers and permyriad side by side, the IDs below. */}
+        <div className={COLS2}>
           <Field label="Workers" error={errs["rare.workers"]} hint="needs Fort">
             <Input type="number" min={0} value={d.rare.workers} onChange={(e) => set("rare", { workers: e.target.value })} />
           </Field>
           <Field label="Permyriad" error={errs["rare.permyriad"]} hint="per 10,000">
             <Input type="number" min={0} max={10000} value={d.rare.permyriad} onChange={(e) => set("rare", { permyriad: e.target.value })} />
           </Field>
-          <Field label="Extra Pokémon IDs" hint="always hunted">
+          <Field label="Extra Pokémon IDs" hint="always hunted" className="col-span-2 sm:col-span-1">
             <Input value={d.rare.extra} onChange={(e) => set("rare", { extra: e.target.value })} spellCheck={false} placeholder="e.g. 147, 371" />
           </Field>
         </div>
