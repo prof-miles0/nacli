@@ -9,6 +9,8 @@ import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type {
   DragoniteProxies,
+  SchedRun,
+  SchedRunPage,
   DragoniteRateEvent,
   DragoniteStatus,
   StackGeofences,
@@ -1527,10 +1529,48 @@ for (const what of ["active", "areas", "diagnostics"] as const) {
 }
 app.get("/api/dragonite/:id/scheduler/schedules", (c) => schedulerRoute(c, "GET", "/scheduler/schedules"));
 app.get("/api/dragonite/:id/scheduler/groups", (c) => schedulerRoute(c, "GET", "/scheduler/groups"));
-// Dragonite only gives the newest N runs (up to 1000), optionally for one schedule.
+// Dragonite only gives the newest N runs (up to 1000, optionally for one
+// schedule) with no paging, so Nacli keeps that list for a few seconds and
+// serves it filtered and in pages: ?offset&limit, q (search), outcome, since (ms).
+const RUNS_MAX = 1000;
+const runsKey = (id: string, sid?: number) => `dragonite-runs:${id}:${sid ?? 0}`;
 app.get("/api/dragonite/:id/scheduler/runs", async (c) => {
-  const sid = schedId(c.req.query("schedule_id"));
-  return schedulerRoute(c, "GET", `/scheduler/runs?limit=1000${sid ? `&schedule_id=${sid}` : ""}`);
+  const d = dragoniteWithApi(c.req.param("id"));
+  if (!d) return c.json({ error: "Dragonite has no url in its [stack.dragonite]" }, 404);
+  const q = (k: string) => c.req.query(k);
+  const sid = schedId(q("schedule_id"));
+  const offset = Math.max(0, Math.min(Number(q("offset")) || 0, RUNS_MAX));
+  const limit = Math.max(1, Math.min(Number(q("limit")) || 50, 200));
+  const needle = (q("q") ?? "").trim().toLowerCase().slice(0, 80);
+  const outcome = q("outcome") ?? "";
+  const since = Number(q("since")) || 0;
+  try {
+    const all = await cachedVm(runsKey(d.id, sid), 0, async () => {
+      const json = await schedulerCall(d, "GET", `/scheduler/runs?limit=${RUNS_MAX}${sid ? `&schedule_id=${sid}` : ""}`, cfg.requestTimeoutMs);
+      const list = (Array.isArray(json) ? json : []) as SchedRun[];
+      const at = (r: SchedRun) => Date.parse(r.fire_at) || 0;
+      return list.sort((a, b) => at(b) - at(a) || b.id - a.id);
+    });
+    const matching = all.filter(
+      (r) =>
+        (!since || (Date.parse(r.fire_at) || 0) >= since) &&
+        (!needle || [r.summary, r.detail, r.area_name, r.schedule_name].some((f) => f?.toLowerCase().includes(needle))),
+    );
+    const counts: Record<string, number> = {};
+    for (const r of matching) counts[r.outcome] = (counts[r.outcome] ?? 0) + 1;
+    const rows = outcome ? matching.filter((r) => r.outcome === outcome) : matching;
+    const page: SchedRunPage = {
+      runs: rows.slice(offset, offset + limit),
+      total: rows.length,
+      counts,
+      next: offset + limit < rows.length ? offset + limit : null,
+      capped: all.length >= RUNS_MAX,
+    };
+    return c.json(page);
+  } catch (e) {
+    const status = e instanceof DragoniteError && e.status >= 400 && e.status < 600 ? e.status : 502;
+    return c.json({ error: (e as Error).message }, status as 400);
+  }
 });
 
 app.post("/api/dragonite/:id/scheduler/schedules", (c) => schedulerRoute(c, "POST", "/scheduler/schedules", { body: true, log: "creates schedule" }));
@@ -1568,6 +1608,8 @@ app.post("/api/dragonite/:id/scheduler/runs", async (c) => {
   if (!d) return c.json({ error: "unknown stack" }, 404);
   try {
     const json = await schedulerCall(d, "POST", "/scheduler/runs", cfg.requestTimeoutMs, { schedule_id, action_idx, area_id });
+    // The ledger has a new run: read it again on the next page asked for.
+    for (const k of vmCache.keys()) if (k.startsWith(`dragonite-runs:${d.id}:`)) vmCache.delete(k);
     console.log(`[dragonite] ${c.get("user")} runs action ${action_idx} of schedule ${schedule_id} for area ${area_id} on ${d.name}`);
     return c.json(json ?? { ok: true });
   } catch (e) {

@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, type LucideIcon, Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Input } from "./ui";
@@ -72,26 +72,60 @@ export function Toggle({
   options,
   value,
   onChange,
+  size = "sm",
+  fill,
 }: {
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; icon?: LucideIcon; count?: number }[];
   value: string;
   onChange: (v: string) => void;
+  /** "md": a larger switch between a page's views. */
+  size?: "sm" | "md";
+  /**
+   * On a phone it spans the whole width, its options sharing it; each label
+   * shows when there is room for it, else only its icon (the label stays as
+   * the accessible name).
+   */
+  fill?: boolean;
 }) {
-  return (
-    <div className="inline-flex rounded-lg border bg-card p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={cn(
-            "rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors",
-            value === o.value && "bg-accent text-foreground",
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
+  const md = size === "md";
+  const bar = (
+    <div role="tablist" className={cn("inline-flex rounded-lg border bg-card p-0.5", md && "rounded-xl p-1", fill && "flex w-full sm:inline-flex sm:w-auto")}>
+      {options.map((o) => {
+        const on = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            aria-label={fill ? o.label : undefined}
+            title={fill ? o.label : undefined}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0",
+              md && "gap-2 rounded-lg px-3.5 py-1.5 text-sm [&_svg]:size-4",
+              fill && "flex-1 justify-center sm:flex-none",
+              on && "bg-accent text-foreground shadow-sm",
+            )}
+          >
+            {o.icon ? <o.icon /> : null}
+            <span className={cn(fill && o.icon && "hidden @[18rem]:inline")}>{o.label}</span>
+            {o.count !== undefined ? (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 text-[11px] leading-4 tabular-nums",
+                  on ? "bg-foreground/10 text-foreground" : "bg-muted text-muted-foreground",
+                  fill && "hidden @md:inline",
+                )}
+              >
+                {o.count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
+  // The wrapper measures the room the labels have (a container query).
+  return fill ? <div className="@container w-full sm:w-auto">{bar}</div> : bar;
 }

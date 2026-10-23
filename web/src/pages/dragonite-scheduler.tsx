@@ -1,15 +1,16 @@
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Copy, History, ListChecks, Pencil, Play, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Boxes, CalendarClock, ChevronRight, Copy, History, ListChecks, Pencil, Play, Plus, RefreshCw, ScrollText, Trash2, Wand2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { DragoniteInfo, GroupOut, SchedActivity, SchedAreaActivity, ScheduleOut, SchedRun } from "@shared/types";
 import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
+import { FilterMenu } from "@/components/filter-menu";
 import { MenuButton } from "@/components/menu-button";
 import { CopyScheduleModal, GroupModal, QuestMigrationModal, RunNowModal, ScheduleModal } from "@/components/scheduler-forms";
 import { useStacks } from "@/components/stack-tag";
 import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
 import { toast } from "@/components/toaster";
-import { Button, Card, HoverCard, Modal, Select, Spinner, Table } from "@/components/ui";
+import { Button, Card, HoverCard, Modal, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { actionEffect, actionText, BUILTIN_GROUPS, KIND_LABEL, timings, windowText } from "@/lib/scheduler";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
@@ -21,9 +22,9 @@ const VIEW_KEY = "nacli.scheduler.view";
 
 type View = "schedules" | "groups" | "runs";
 const VIEWS = [
-  { value: "schedules", label: "Schedules" },
-  { value: "groups", label: "Groups" },
-  { value: "runs", label: "Run ledger" },
+  { value: "schedules", label: "Schedules", icon: CalendarClock },
+  { value: "groups", label: "Groups", icon: Boxes },
+  { value: "runs", label: "Runs", icon: ScrollText },
 ];
 
 const remember = (key: string, v: string) => {
@@ -64,6 +65,26 @@ function Pill({ color, children, title }: { color: string; children: React.React
 }
 
 const ms = (iso?: string) => (iso ? new Date(iso).getTime() : NaN);
+
+/** Each schedule kind's colour, for its pill. */
+const KIND_COLOR: Record<string, string> = { recurring: "#3b82f6", dated: "#f59e0b", manual: "#a855f7" };
+const KindPill = ({ kind }: { kind: string }) => <Pill color={KIND_COLOR[kind] ?? "var(--muted-foreground)"}>{KIND_LABEL[kind] ?? kind}</Pill>;
+
+/** A few values as small chips, the rest counted ("+2"), all of them on hover. */
+function Chips({ items, max = 3, mono, nowrap }: { items: string[]; max?: number; mono?: boolean; nowrap?: boolean }) {
+  if (!items.length) return <span className="text-muted-foreground">—</span>;
+  const rest = items.length - max;
+  return (
+    <span className={cn("flex items-center gap-1", nowrap ? "flex-nowrap" : "flex-wrap")} title={items.join(", ")}>
+      {items.slice(0, max).map((x, i) => (
+        <span key={i} className={cn("rounded-md bg-muted/60 px-1.5 py-0.5 text-[11px] whitespace-nowrap text-foreground/80", mono && "font-mono tabular-nums")}>
+          {x}
+        </span>
+      ))}
+      {rest > 0 ? <span className="text-[11px] text-muted-foreground">+{rest}</span> : null}
+    </span>
+  );
+}
 
 export function DragoniteSchedulerPage() {
   const { data: app } = useAppInfo();
@@ -131,14 +152,18 @@ function StackScheduler({ stack, others, tabs, tabbed }: { stack: DragoniteInfo;
   const groups = useQuery({ queryKey: ["scheduler-groups", stack.id], queryFn: () => endpoints.scheduler.groups(stack.id), refetchInterval: 60_000 });
   const active = useQuery({ queryKey: ["scheduler-active", stack.id], queryFn: () => endpoints.scheduler.active(stack.id), refetchInterval: 30_000 });
   const diag = useQuery({ queryKey: ["scheduler-diagnostics", stack.id], queryFn: () => endpoints.scheduler.diagnostics(stack.id), refetchInterval: 60_000 });
-  const runs = useQuery({ queryKey: ["scheduler-runs", stack.id, 0], queryFn: () => endpoints.scheduler.runs(stack.id), refetchInterval: 30_000 });
+  // The last 24 h, counted on the server: only the totals come back.
+  const runs = useQuery({
+    queryKey: ["scheduler-runs-24h", stack.id],
+    queryFn: () => endpoints.scheduler.runs(stack.id, { since: Date.now() - 86_400_000, limit: 1 }),
+    refetchInterval: 30_000,
+  });
   const refresh = () => qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith("scheduler-") });
 
   const list = schedules.data ?? [];
   const activeIds = new Set((active.data?.schedules ?? []).map((s) => s.id));
-  const dayAgo = Date.now() - 86_400_000;
-  const recent = (runs.data ?? []).filter((r) => ms(r.fire_at) >= dayAgo);
-  const errors = recent.filter((r) => r.outcome === "error").length;
+  const recent = runs.data?.total ?? 0;
+  const errors = runs.data?.counts.error ?? 0;
   const problems = [...(diag.data?.problems ?? [])].sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "error" ? -1 : 1));
 
   return (
@@ -159,9 +184,9 @@ function StackScheduler({ stack, others, tabs, tabbed }: { stack: DragoniteInfo;
               <HeadStat label="Groups" value={fmt.int(groups.data?.length ?? 0)} hint="Plus the built-in all, all-pokemon, all-fort, all-quest and all-rare">
                 <span className="text-[11px] text-muted-foreground">+{BUILTIN_GROUPS.length} built-in</span>
               </HeadStat>
-              <HeadStat label="Runs · 24h" value={fmt.int(recent.length)} tone={errors ? "warn" : undefined} hint="Runs fired in the last 24 hours">
+              <HeadStat label="Runs · 24h" value={fmt.int(recent)} tone={errors ? "warn" : undefined} hint="Runs fired in the last 24 hours">
                 <span className="text-[11px] text-muted-foreground">
-                  {fmt.int(recent.filter((r) => r.outcome === "success").length)} ok · {fmt.int(errors)} failed
+                  {fmt.int(runs.data?.counts.success ?? 0)} ok · {fmt.int(errors)} failed
                 </span>
               </HeadStat>
             </div>
@@ -214,7 +239,16 @@ function StackScheduler({ stack, others, tabs, tabbed }: { stack: DragoniteInfo;
       ) : null}
 
       <div className="mt-2">
-        <Toggle value={view} onChange={(v) => setView(v as View)} options={VIEWS} />
+        <Toggle
+          size="md"
+          fill
+          value={view}
+          onChange={(v) => setView(v as View)}
+          options={VIEWS.map((o) => ({
+            ...o,
+            count: o.value === "schedules" ? schedules.data?.length : o.value === "groups" ? groups.data?.length : undefined,
+          }))}
+        />
       </div>
 
       {view === "schedules" ? (
@@ -281,6 +315,11 @@ function Confirm({ title, action, children, onConfirm, onClose }: { title: strin
   );
 }
 
+/** Its groups and areas, and what it leaves out ("except …"). */
+const targetsOf = (s: ScheduleOut) => {
+  const t = s.document.targets ?? {};
+  return [...(t.groups ?? []), ...(t.areas ?? []), ...(t.exclude?.length ? [`except ${t.exclude.join(", ")}`] : [])];
+};
 const targetText = (s: ScheduleOut) => {
   const t = s.document.targets ?? {};
   return [...(t.groups ?? []), ...(t.areas ?? [])].join(", ") + (t.exclude?.length ? ` · except ${t.exclude.join(", ")}` : "");
@@ -315,7 +354,7 @@ function SchedulesView({
   const rows = useMemo(() => (list ?? []).filter((s) => matches(search, s.name, targetText(s))), [list, search]);
   const { sorted, header } = useSorted(
     rows,
-    { name: (s) => s.name, kind: (s) => s.document.schedule_kind, priority: (s) => s.priority, enabled: (s) => Number(s.enabled) },
+    { name: (s) => s.name, enabled: (s) => Number(s.enabled) },
     "name",
   );
   const toggle = (id: number) =>
@@ -381,19 +420,28 @@ function SchedulesView({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {/* On a phone the search takes its own line, the buttons the next. */}
-        <div className="w-full sm:w-auto">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1 sm:flex-none">
           <SearchBox value={search} onChange={setSearch} placeholder="Search schedules…" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setMigrating(true)}>
-            <Wand2 />
-            Migrate quest hours…
-          </Button>
-          <Button size="sm" onClick={() => setEditing("new")}>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The admin's quest-hours migration: an icon, its name on hover. */}
+          <HoverCard
+            className="inline-flex"
+            content={
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">Migrate quest hours</span>
+                <span className="text-muted-foreground">Turns the areas' quest hours into start/check schedules</span>
+              </span>
+            }
+          >
+            <Button size="icon" variant="outline" className="size-9" aria-label="Migrate quest hours" onClick={() => setMigrating(true)}>
+              <Wand2 />
+            </Button>
+          </HoverCard>
+          <Button onClick={() => setEditing("new")}>
             <Plus />
-            New schedule
+            New
           </Button>
         </div>
       </div>
@@ -416,10 +464,8 @@ function SchedulesView({
                   <Switch on={pending[s.id] ?? s.enabled} busy={s.id in pending} label={s.enabled ? "Disable schedule" : "Enable schedule"} onChange={() => setEnabled(s)} />
                   {menu(s)}
                 </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-xs text-muted-foreground">
-                  <span>{KIND_LABEL[s.document.schedule_kind] ?? s.document.schedule_kind}</span>
-                  <span>priority {s.priority}</span>
-                  <span className="truncate">{timings(s.document).join(", ") || "—"}</span>
+                <div className="pl-6">
+                  <Chips items={timings(s.document)} mono />
                 </div>
                 {open.has(s.id) ? (
                   <div className="rounded-lg bg-muted/30 p-2">
@@ -435,10 +481,7 @@ function SchedulesView({
                 <tr>
                   <th className="w-8" />
                   {header("name", "Name")}
-                  {header("kind", "Kind")}
                   <th>Timings</th>
-                  <th>Targets</th>
-                  {header("priority", "Priority")}
                   {header("enabled", "Enabled")}
                   <th className="w-10" />
                 </tr>
@@ -446,7 +489,7 @@ function SchedulesView({
               <tbody>
                 {sorted.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                    <td colSpan={5} className="py-8 text-center text-muted-foreground">
                       {list.length ? "No schedules match." : "No schedules yet."}
                     </td>
                   </tr>
@@ -458,19 +501,14 @@ function SchedulesView({
                         <ChevronRight className={cn("size-4 text-muted-foreground transition-transform", open.has(s.id) && "rotate-90")} />
                       </td>
                       <td>
-                        <span className="inline-flex items-center gap-2 font-medium">
+                        <span className={cn("inline-flex items-center gap-2 font-medium whitespace-nowrap", !s.enabled && "text-muted-foreground")}>
                           {s.name}
                           {badges(s)}
                         </span>
                       </td>
-                      <td className="text-muted-foreground">{KIND_LABEL[s.document.schedule_kind] ?? s.document.schedule_kind}</td>
-                      <td className="max-w-56 truncate text-xs text-muted-foreground tabular-nums" title={timings(s.document).join(", ")}>
-                        {timings(s.document).join(", ") || "—"}
+                      <td className="w-full">
+                        <Chips items={timings(s.document)} mono nowrap />
                       </td>
-                      <td className="max-w-48 truncate text-xs text-muted-foreground" title={targetText(s)}>
-                        {targetText(s) || "—"}
-                      </td>
-                      <td className="tabular-nums">{s.priority}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <Switch on={pending[s.id] ?? s.enabled} busy={s.id in pending} label={s.enabled ? "Disable schedule" : "Enable schedule"} onChange={() => setEnabled(s)} />
                       </td>
@@ -480,7 +518,7 @@ function SchedulesView({
                     </tr>
                     {open.has(s.id) ? (
                       <tr className="bg-muted/20 hover:bg-muted/20!">
-                        <td colSpan={8} className="px-3! pb-4!">
+                        <td colSpan={5} className="px-3! pb-4!">
                           <div className="w-0 min-w-full">
                             <ScheduleDetail s={s} onRun={(idx) => setRunning({ s, idx })} />
                           </div>
@@ -523,7 +561,6 @@ function SchedulesView({
 function ScheduleDetail({ s, onRun }: { s: ScheduleOut; onRun: (idx: number) => void }) {
   const d = s.document;
   const rows: [string, string][] = [
-    ["Targets", targetText(s) || "—"],
     ...(d.windows?.length ? ([["Windows", `${d.windows.map(windowText).join(", ")} (area-local)`]] as [string, string][]) : []),
     ...(d.dates?.length ? ([["Dates", d.dates.join(", ")]] as [string, string][]) : []),
     ...(d.expires_at ? ([["Expires", fmt.time(ms(d.expires_at))]] as [string, string][]) : []),
@@ -531,7 +568,14 @@ function ScheduleDetail({ s, onRun }: { s: ScheduleOut; onRun: (idx: number) => 
   ];
   return (
     <div className="flex flex-col gap-3 text-xs">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+      {/* What the row leaves out: its kind, priority and targets. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <KindPill kind={d.schedule_kind} />
+        <span className="rounded-full border px-2 py-0.5 text-muted-foreground tabular-nums">priority {s.priority}</span>
+        <span className="text-muted-foreground">targets</span>
+        <Chips items={targetsOf(s)} max={6} />
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 empty:hidden">
         {rows.map(([k, v]) => (
           <Fragment key={k}>
             <dt className="text-muted-foreground">{k}</dt>
@@ -596,20 +640,21 @@ function GroupsView({ stack, list, schedules, error, refresh }: { stack: Dragoni
         <div className="min-w-0 flex-1 sm:flex-none">
           <SearchBox value={search} onChange={setSearch} placeholder="Search groups…" />
         </div>
-        <Button size="sm" className="shrink-0" onClick={() => setEditing("new")}>
+        <Button className="shrink-0" onClick={() => setEditing("new")}>
           <Plus />
-          New group
+          New
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Built-in, always there: {BUILTIN_GROUPS.join(", ")}. The all-&lt;type&gt; groups hold every area with that worker type above 0.
-      </p>
       {error ? (
         <p className="text-sm text-red-300">{error.message}</p>
       ) : !list ? (
         <Spinner />
       ) : !list.length ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">No groups of its own{on(stack.id)} yet.</Card>
+        <Card className="items-center gap-1.5 p-6 text-center text-sm">
+          <Boxes className="size-5 text-muted-foreground" />
+          <span className="font-medium">No groups of its own{on(stack.id)} yet</span>
+          <span className="text-xs text-muted-foreground">Group areas to target them together from a schedule; the built-in ones below are always there.</span>
+        </Card>
       ) : (
         <>
           <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card sm:hidden">
@@ -653,6 +698,17 @@ function GroupsView({ stack, list, schedules, error, refresh }: { stack: Dragoni
           </div>
         </>
       )}
+      {/* Dragonite's own groups, always there and not editable. */}
+      <div className="flex flex-col gap-2 rounded-xl border border-dashed px-4 py-3">
+        <span className="inline-flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <Boxes className="size-3.5" />
+          Built-in groups
+        </span>
+        <Chips items={[...BUILTIN_GROUPS]} max={BUILTIN_GROUPS.length} mono />
+        <span className="text-[11px] text-muted-foreground">
+          <code>all</code> holds every area; each <code>all-&lt;type&gt;</code>, every area with workers of that type.
+        </span>
+      </div>
       {editing ? <GroupModal stack={stack} group={editing === "new" ? undefined : editing} onClose={() => setEditing(undefined)} onDone={refresh} /> : null}
       {deleting ? (
         <Confirm
@@ -730,14 +786,22 @@ function ActivePanel({ activity }: { activity?: SchedActivity }) {
   );
 }
 
-const OUTCOME_FILTERS = [
-  { value: "all", label: "All" },
-  { value: "success", label: "Success" },
-  { value: "error", label: "Error" },
-  { value: "skipped", label: "Skipped" },
-  { value: "pending", label: "Pending" },
-];
 const PER_PAGE = 50;
+
+/** Calls `onSeen` when the element scrolls near the viewport: the next page of a list. */
+function useNearEnd(onSeen: () => void, active: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const cb = useRef(onSeen);
+  cb.current = onSeen;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !active) return;
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && cb.current(), { rootMargin: "400px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [active]);
+  return ref;
+}
 
 /** How long a run took: Dragonite stamps start and finish with the same clock, so the gap is right even when the stamps are not. */
 const took = (r: SchedRun) => {
@@ -747,7 +811,8 @@ const took = (r: SchedRun) => {
 
 /**
  * The run ledger: Dragonite keeps the newest 1000 runs (per schedule when one is
- * chosen); the outcome filter, search and pages work on those here, as in its admin.
+ * chosen). Nacli's server filters and counts them, and the list loads 50 at a
+ * time as it scrolls.
  */
 function RunsView({
   stack,
@@ -762,21 +827,29 @@ function RunsView({
   scheduleId?: number;
   onSchedule: (id?: number) => void;
 }) {
-  const [outcome, setOutcome] = useState("all");
+  const [outcome, setOutcome] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(0);
-  const q = useQuery({
-    queryKey: ["scheduler-runs", stack.id, scheduleId ?? 0],
-    queryFn: () => endpoints.scheduler.runs(stack.id, scheduleId),
+  // Searched on the server, once typing pauses.
+  const [needle, setNeedle] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setNeedle(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  const q = useInfiniteQuery({
+    queryKey: ["scheduler-runs", stack.id, scheduleId ?? 0, needle, outcome],
+    queryFn: ({ pageParam }) => endpoints.scheduler.runs(stack.id, { scheduleId, offset: pageParam, limit: PER_PAGE, q: needle, outcome }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => last.next ?? undefined,
     refetchInterval: 30_000,
     placeholderData: (prev) => prev,
   });
-  const rows = (q.data ?? [])
-    .filter((r) => (outcome === "all" || r.outcome === outcome) && matches(search, r.summary, r.detail, r.area_name, r.schedule_name))
-    .sort((a, b) => ms(b.fire_at) - ms(a.fire_at) || b.id - a.id);
-  const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
-  const at = Math.min(page, pages - 1);
-  const shown = rows.slice(at * PER_PAGE, at * PER_PAGE + PER_PAGE);
+  const first = q.data?.pages[0];
+  const shown = q.data?.pages.flatMap((p) => p.runs) ?? [];
+  const total = first?.total ?? 0;
+  // Each outcome's count among the runs the search leaves, for the filter.
+  const outcomes = Object.keys(OUTCOME).map((k) => ({ value: k, label: OUTCOME[k].label, color: OUTCOME[k].color, count: first?.counts[k] ?? 0 }));
+  const searched = Object.values(first?.counts ?? {}).reduce((n, x) => n + x, 0);
+  const more = useNearEnd(() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage(), !!q.hasNextPage);
   const name = (r: SchedRun) => r.schedule_name ?? schedules.find((s) => s.id === r.schedule_id)?.name ?? `#${r.schedule_id}`;
 
   return (
@@ -786,36 +859,31 @@ function RunsView({
         <div className="w-full sm:w-auto">
           <SearchBox
             value={search}
-            onChange={(v) => {
-              setSearch(v);
-              setPage(0);
-            }}
+            onChange={setSearch}
             placeholder="Search runs…"
           />
         </div>
-        <Select
-          value={scheduleId ?? ""}
-          onChange={(e) => {
-            onSchedule(e.target.value ? Number(e.target.value) : undefined);
-            setPage(0);
-          }}
-          className="h-9 max-w-52 text-xs"
-        >
-          <option value="">All schedules</option>
-          {schedules.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </Select>
-        <Toggle
-          value={outcome}
-          onChange={(v) => {
-            setOutcome(v);
-            setPage(0);
-          }}
-          options={OUTCOME_FILTERS}
-        />
+        {/* Phones: the two filters share the row under the search. */}
+        <div className="flex w-full gap-2 sm:w-auto">
+          <FilterMenu
+            className="min-w-0 flex-1 sm:flex-none"
+            label="Schedule"
+            allLabel="All schedules"
+            icon={CalendarClock}
+            value={scheduleId === undefined ? "" : String(scheduleId)}
+            onChange={(v) => onSchedule(v ? Number(v) : undefined)}
+            options={schedules.map((s) => ({ value: String(s.id), label: s.name }))}
+          />
+          <FilterMenu
+            className="min-w-0 flex-1 sm:flex-none"
+            label="Outcome"
+            allLabel="All outcomes"
+            value={outcome}
+            onChange={setOutcome}
+            options={outcomes.filter((o) => o.count || o.value === outcome)}
+            total={searched}
+          />
+        </div>
       </div>
       {q.error ? (
         <p className="text-sm text-red-300">{(q.error as Error).message}</p>
@@ -886,22 +954,16 @@ function RunsView({
               </tbody>
             </Table>
           </div>
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          {/* Near here, the next page loads. */}
+          <div ref={more} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>
-              {fmt.int(rows.length)} run{rows.length === 1 ? "" : "s"}
-              {q.data.length >= 1000 ? " · Dragonite keeps the newest 1000" : ""}
+              {q.hasNextPage ? `${fmt.int(shown.length)} of ${fmt.int(total)} runs` : `${fmt.int(total)} run${total === 1 ? "" : "s"}`}
+              {first?.capped ? " · Dragonite keeps the newest 1000" : ""}
             </span>
-            {pages > 1 ? (
-              <span className="flex items-center gap-2">
-                <span className="tabular-nums">
-                  Page {at + 1} of {pages}
-                </span>
-                <Button size="icon" variant="ghost" className="size-7" disabled={at === 0} onClick={() => setPage(at - 1)} aria-label="Previous page">
-                  <ChevronLeft />
-                </Button>
-                <Button size="icon" variant="ghost" className="size-7" disabled={at >= pages - 1} onClick={() => setPage(at + 1)} aria-label="Next page">
-                  <ChevronRight />
-                </Button>
+            {q.isFetchingNextPage ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner className="size-3.5" />
+                Loading more…
               </span>
             ) : null}
           </div>

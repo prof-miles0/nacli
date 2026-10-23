@@ -1,9 +1,9 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, KeyRound, ListFilter, Plus } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { type AccountCounts, type AccountLevelCounts, type AccountState, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
 import { AddAccountsModal } from "@/components/account-forms";
+import { FilterMenu } from "@/components/filter-menu";
 import { StackTag } from "@/components/stack-tag";
 import { SearchBox } from "@/components/table-tools";
 import { AccentCard, Badge, Button, Card, HoverCard, Label, Spinner, StackBar, Table } from "@/components/ui";
@@ -269,120 +269,19 @@ const accountStatus = (a: DragoniteAccount) => STATES[accountState(a)];
 /** Each state's colour, from the breakdown above (Available is its "good"). */
 const stateColor = (k: AccountState) => STATUSES.find((x) => x.key === (k === "available" ? "good" : k))?.color ?? "var(--muted-foreground)";
 
-/**
- * Pick one account state: only those some account is in, each with its
- * colour, its count and its share of the list.
- */
+/** Pick one account state: only those some account is in, each with its colour, count and share. */
 function StateFilter({ value, counts, onChange }: { value: string; counts?: Partial<Record<AccountState, number>>; onChange: (v: string) => void }) {
-  const [pos, setPos] = useState<{ top: number; left: number; width: number }>();
-  const ref = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const open = !!pos;
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setPos(undefined);
-    };
-    const dismiss = () => setPos(undefined);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPos(undefined);
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", esc);
-    window.addEventListener("scroll", dismiss, true);
-    window.addEventListener("resize", dismiss);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", esc);
-      window.removeEventListener("scroll", dismiss, true);
-      window.removeEventListener("resize", dismiss);
-    };
-  }, [open]);
-
-  const total = Object.values(counts ?? {}).reduce((n, x) => n + (x ?? 0), 0);
   const shown = (Object.keys(STATES) as AccountState[]).filter((k) => counts?.[k] || k === value);
   // A single state leaves nothing to filter.
   if (shown.length < 2 && !value) return null;
-  const current = value ? (value as AccountState) : undefined;
-
-  const toggle = () => {
-    if (open) return setPos(undefined);
-    const r = ref.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.max(r.width, 224);
-    setPos({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - width - 8), width });
-  };
-  const pick = (v: string) => {
-    setPos(undefined);
-    onChange(v);
-  };
-  const item = (key: string, label: string, n: number, color?: string) => {
-    const on = key === value;
-    return (
-      <button
-        key={key}
-        type="button"
-        role="option"
-        aria-selected={on}
-        onClick={() => pick(key)}
-        className={cn("flex w-full flex-col gap-1 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent", on && "bg-accent/60")}
-      >
-        <span className="flex w-full items-center gap-2 text-sm">
-          {color ? <span className="size-2.5 shrink-0 rounded-full" style={{ background: color, boxShadow: `0 0 0 3px ${color}26` }} /> : <ListFilter className="size-3.5 shrink-0 text-muted-foreground" />}
-          <span className={cn("flex-1 truncate", on && "font-medium")}>{label}</span>
-          <span className="text-xs text-muted-foreground tabular-nums">{fmt.int(n)}</span>
-          <Check className={cn("size-3.5 shrink-0", on ? "text-foreground" : "invisible")} />
-        </span>
-        {color && total ? (
-          <span className="ml-[18px] mr-[22px] h-1 overflow-hidden rounded-full bg-muted">
-            <span className="block h-full rounded-full" style={{ width: `${Math.max(2, (n / total) * 100)}%`, background: color }} />
-          </span>
-        ) : null}
-      </button>
-    );
-  };
-
   return (
-    <>
-      <button
-        ref={ref}
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Account state"
-        onClick={toggle}
-        className={cn(
-          "inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm transition-colors hover:bg-accent",
-          open && "ring-2 ring-ring/50",
-        )}
-        style={current ? { borderColor: `${stateColor(current)}80` } : undefined}
-      >
-        {current ? (
-          <span className="size-2.5 rounded-full" style={{ background: stateColor(current), boxShadow: `0 0 0 3px ${stateColor(current)}26` }} />
-        ) : (
-          <ListFilter className="size-3.5 text-muted-foreground" />
-        )}
-        {current ? STATES[current].label : "All states"}
-        {counts ? (
-          <span className="hidden rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground tabular-nums sm:inline">{fmt.int(current ? (counts[current] ?? 0) : total)}</span>
-        ) : null}
-        <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", open && "rotate-180")} />
-      </button>
-      {pos
-        ? createPortal(
-            <div
-              ref={menuRef}
-              role="listbox"
-              style={{ top: pos.top, left: pos.left, width: pos.width }}
-              className="animate-in fixed z-50 flex flex-col gap-0.5 rounded-lg border bg-popover p-1 shadow-xl"
-            >
-              {item("", "All states", total)}
-              <div className="my-0.5 border-t" />
-              {shown.map((k) => item(k, STATES[k].label, counts?.[k] ?? 0, stateColor(k)))}
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
+    <FilterMenu
+      label="Account state"
+      allLabel="All states"
+      value={value}
+      onChange={onChange}
+      options={shown.map((k) => ({ value: k, label: STATES[k].label, color: stateColor(k), count: counts?.[k] ?? 0 }))}
+    />
   );
 }
 

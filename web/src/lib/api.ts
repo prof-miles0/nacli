@@ -21,7 +21,7 @@ import type {
   SchedDiagnostics,
   ScheduleDoc,
   ScheduleOut,
-  SchedRun,
+  SchedRunPage,
   ScoutJob,
   SystemStatus,
   DragoniteStatus,
@@ -181,8 +181,17 @@ export const endpoints = {
   scheduler: {
     schedules: (id: string) => api<ScheduleOut[]>(`/dragonite/${encodeURIComponent(id)}/scheduler/schedules`),
     groups: (id: string) => api<GroupOut[]>(`/dragonite/${encodeURIComponent(id)}/scheduler/groups`),
-    runs: (id: string, scheduleId?: number) =>
-      api<SchedRun[]>(`/dragonite/${encodeURIComponent(id)}/scheduler/runs${scheduleId ? `?schedule_id=${scheduleId}` : ""}`),
+    /** One page of the run ledger, filtered on the server (Dragonite itself has no paging). */
+    runs: (id: string, p: { scheduleId?: number; offset?: number; limit?: number; q?: string; outcome?: string; since?: number } = {}) => {
+      const q = new URLSearchParams();
+      if (p.scheduleId) q.set("schedule_id", String(p.scheduleId));
+      if (p.offset) q.set("offset", String(p.offset));
+      if (p.limit) q.set("limit", String(p.limit));
+      if (p.q) q.set("q", p.q);
+      if (p.outcome) q.set("outcome", p.outcome);
+      if (p.since) q.set("since", String(p.since));
+      return api<SchedRunPage>(`/dragonite/${encodeURIComponent(id)}/scheduler/runs?${q}`);
+    },
     active: (id: string) => api<SchedActivity>(`/dragonite/${encodeURIComponent(id)}/scheduler/active`),
     areas: (id: string) => api<SchedArea[]>(`/dragonite/${encodeURIComponent(id)}/scheduler/areas`),
     diagnostics: (id: string) => api<SchedDiagnostics>(`/dragonite/${encodeURIComponent(id)}/scheduler/diagnostics`),

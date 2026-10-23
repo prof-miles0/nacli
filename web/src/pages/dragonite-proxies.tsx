@@ -6,7 +6,8 @@ import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tab
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { type MenuItem, MenuButton } from "@/components/menu-button";
 import { StackTag } from "@/components/stack-tag";
-import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
+import { FilterMenu } from "@/components/filter-menu";
+import { matches, SearchBox, useSorted } from "@/components/table-tools";
 import { toast } from "@/components/toaster";
 import { AddChoice, Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -43,10 +44,12 @@ const STATE: Record<State, { label: string; cls: string }> = {
   unknown: { label: "Untested", cls: "bg-amber-500" },
 };
 
-const FILTERS = [
-  { value: "all", label: "All" },
-  { value: "failing", label: "Failing" },
-  { value: "off", label: "Disabled" },
+/** Each state's colour in the filter, worst first. */
+const STATE_COLOR: [State, string][] = [
+  ["failing", "#ef4444"],
+  ["unknown", "#f59e0b"],
+  ["good", "#22c55e"],
+  ["off", "var(--muted-foreground)"],
 ];
 
 /** host:port, or what an empty URL means (Dragonite scanning without a proxy). */
@@ -73,7 +76,8 @@ export function DragoniteProxiesPage() {
     }
   };
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
+  // One state only ("" = every proxy), as the row shows it (overallState).
+  const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<{ p: ProxyEntry; i: ProxyInstance }>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -90,21 +94,29 @@ export function DragoniteProxiesPage() {
   };
   const stackName = (id: string) => stacks.find((x) => x.id === id)?.name ?? id;
 
+  // The proxies of this tab the search leaves, before the state filter (it counts them).
+  const searched = useMemo(
+    () =>
+      (q.data?.proxies ?? [])
+        .map((p) => ({ p, here: current ? p.instances.filter((i) => i.stack === current) : p.instances }))
+        .filter(({ p, here }) => here.length > 0 && matches(search, p.endpoint, ...p.instances.map((i) => i.name))),
+    [q.data, current, search],
+  );
+  const stateCounts = useMemo(() => {
+    const n: Partial<Record<State, number>> = {};
+    for (const { here } of searched) n[overallState(here)] = (n[overallState(here)] ?? 0) + 1;
+    return n;
+  }, [searched]);
   const rows = useMemo(() => {
-    const all = q.data?.proxies ?? [];
-    return all
-      .map((p) => ({ p, here: current ? p.instances.filter((i) => i.stack === current) : p.instances }))
-      .filter(({ p, here }) => here.length > 0 && matches(search, p.endpoint, ...p.instances.map((i) => i.name)))
-      .filter(({ here }) =>
-        filter === "all" ? true : filter === "failing" ? here.some((i) => stateOf(i) === "failing") : here.some((i) => stateOf(i) === "off"),
-      )
+    return searched
+      .filter(({ here }) => !filter || overallState(here) === filter)
       .map(({ p, here }) => ({
         p,
         here,
         names: [...new Set(here.map((i) => i.name))],
         lastOk: Math.max(0, ...here.flatMap((i) => i.providers.map((pr) => pr.lastSuccess ?? 0))),
       }));
-  }, [q.data, current, search, filter]);
+  }, [searched, filter]);
   const { sorted, header } = useSorted(
     rows,
     {
@@ -259,9 +271,17 @@ export function DragoniteProxiesPage() {
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <SearchBox value={search} onChange={setSearch} placeholder="Search proxy or name…" />
-        <div className="flex flex-wrap items-center gap-2">
-          <Toggle value={filter} onChange={setFilter} options={FILTERS} />
-          <Button size="sm" onClick={() => setAdding(true)}>
+        {/* Add always at the right; on a phone the filter fills the rest of its row. */}
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <FilterMenu
+            className="min-w-0 flex-1 sm:flex-none"
+            label="Proxy state"
+            allLabel="All proxies"
+            value={filter}
+            onChange={setFilter}
+            options={STATE_COLOR.filter(([k]) => stateCounts[k] || k === filter).map(([k, color]) => ({ value: k, label: STATE[k].label, color, count: stateCounts[k] ?? 0 }))}
+          />
+          <Button className="ml-auto shrink-0" onClick={() => setAdding(true)}>
             <Plus />
             Add
           </Button>

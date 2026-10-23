@@ -714,6 +714,19 @@ export interface SchedRun {
   worker_type?: string;
 }
 
+/** One page of the run ledger, filtered and counted on Nacli's server. */
+export interface SchedRunPage {
+  runs: SchedRun[];
+  /** Runs matching every filter, across all pages. */
+  total: number;
+  /** Per outcome, among the runs matching the other filters (for the outcome filter). */
+  counts: Record<string, number>;
+  /** Where the next page starts; null on the last. */
+  next: number | null;
+  /** Whether Dragonite's list was full (it keeps the newest 1000). */
+  capped: boolean;
+}
+
 interface Attribution {
   schedule_id: number;
   schedule_name: string;

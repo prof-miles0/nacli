@@ -2,7 +2,8 @@ import { ChevronRight } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { Device, Tagged } from "@shared/types";
 import { ActionsMenu, DEVICE_ACTIONS, useNotify } from "@/components/actions";
-import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
+import { FilterMenu } from "@/components/filter-menu";
+import { matches, SearchBox, useSorted } from "@/components/table-tools";
 import { Badge, Dot, Empty, HoverCard, Spinner, Table } from "@/components/ui";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { splitWorkerId, WorkerName } from "./workers";
@@ -16,23 +17,25 @@ export function deviceState(d: Device): { label: string; tone: StatusTone } {
   return { label: "Idle", tone: "info" };
 }
 
+/** The device filter; Disabled overlaps the others (a disabled device can still be online). */
+const STATES: { value: string; label: string; color: string; test: (d: Device) => boolean }[] = [
+  { value: "online", label: "Online", color: "#22c55e", test: (d) => d.is_connected },
+  { value: "offline", label: "Offline", color: "#ef4444", test: (d) => !d.is_connected },
+  { value: "disabled", label: "Disabled", color: "#f59e0b", test: (d) => !d.enabled },
+];
+
 export function DevicesPage() {
   const { data, isLoading } = useStatus();
   const color = useInstanceColor();
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all");
+  // One state only ("" = every device).
+  const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const { notify, node } = useNotify();
   const { visible } = useInstances();
 
-  const rows = (data?.devices ?? []).filter(
-    (d) =>
-      matches(q, d.origin, d.id, d.instanceName, d.version) &&
-      (filter === "all" ||
-        (filter === "online" && d.is_connected) ||
-        (filter === "offline" && !d.is_connected) ||
-        (filter === "disabled" && !d.enabled)),
-  );
+  const searched = (data?.devices ?? []).filter((d) => matches(q, d.origin, d.id, d.instanceName, d.version));
+  const rows = searched.filter((d) => !filter || STATES.find((s) => s.value === filter)!.test(d));
 
   const { sorted, header } = useSorted<Tagged<Device>>(
     rows,
@@ -51,7 +54,7 @@ export function DevicesPage() {
   // One table per instance, in config.toml order; sorting applies inside each.
   // Instances with no devices keep their header (0/0) unless a search or
   // filter is narrowing the list.
-  const narrowed = !!q || filter !== "all";
+  const narrowed = !!q || !!filter;
   const groups = visible
     .map((i) => ({ id: i.id, name: i.name, rows: sorted.filter((d) => d.instanceId === i.id) }))
     .filter((g) => g.rows.length || !narrowed);
@@ -70,15 +73,14 @@ export function DevicesPage() {
     <div className="animate-in flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SearchBox value={q} onChange={setQ} placeholder="Search origin, id, version…" />
-        <Toggle
+        <FilterMenu
+          className="w-full sm:w-auto"
+          label="Device state"
+          allLabel="All devices"
           value={filter}
           onChange={setFilter}
-          options={[
-            { value: "all", label: `All (${data?.devices.length ?? 0})` },
-            { value: "online", label: "Online" },
-            { value: "offline", label: "Offline" },
-            { value: "disabled", label: "Disabled" },
-          ]}
+          total={searched.length}
+          options={STATES.map((s) => ({ value: s.value, label: s.label, color: s.color, count: searched.filter(s.test).length }))}
         />
       </div>
       {groups.length === 0 ? (

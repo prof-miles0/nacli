@@ -1,9 +1,10 @@
-import { AlertTriangle, ChevronDown } from "lucide-react";
+import { AlertTriangle, ChevronDown, Timer } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Controller, Tagged, Worker } from "@shared/types";
 import { ActionsMenu, CONTROLLER_ACTIONS, useNotify } from "@/components/actions";
-import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
+import { FilterMenu } from "@/components/filter-menu";
+import { matches, SearchBox, useSorted } from "@/components/table-tools";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { Dot, Empty, HoverCard, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -11,6 +12,12 @@ import { useAppInfo, useInstanceColor, useInstances, useStatus } from "@/lib/sta
 import { cn, fmt } from "@/lib/utils";
 
 type Win = "30s" | "1m" | "5m" | "15m";
+const WINDOWS: { value: Win; label: string }[] = [
+  { value: "30s", label: "Last 30 s" },
+  { value: "1m", label: "Last 1 min" },
+  { value: "5m", label: "Last 5 min" },
+  { value: "15m", label: "Last 15 min" },
+];
 const RATE_KEY: Record<Win, keyof NonNullable<Worker["time_windowed_stats"]>> = {
   "30s": "requests_rate_over_30_seconds",
   "1m": "requests_rate_over_1_min",
@@ -32,6 +39,13 @@ export function splitWorkerId(id: string): { base: string; num: string } {
   const m = /^(.*?)[_-](\d+)$/.exec(id);
   return m ? { base: m[1], num: m[2] } : { base: "", num: id };
 }
+
+/** The worker filter: in use, free (connected, not in use) or offline. */
+const STATES: { value: string; label: string; color: string; test: (w: Worker) => boolean }[] = [
+  { value: "inuse", label: "In use", color: "#22c55e", test: (w) => w.is_in_use },
+  { value: "free", label: "Free", color: "#3b82f6", test: (w) => w.is_connected && !w.is_in_use },
+  { value: "offline", label: "Offline", color: "#ef4444", test: (w) => !w.is_connected },
+];
 
 function workerState(w: Worker): { label: string; tone: StatusTone } {
   if (!w.is_connected) return { label: "Offline", tone: "bad" };
@@ -89,7 +103,8 @@ export function WorkersPage() {
   const { visible } = useInstances();
   const color = useInstanceColor();
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all");
+  // One state only ("" = every worker).
+  const [filter, setFilter] = useState("");
   const [win, setWin] = useState<Win>("1m");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const { notify, node } = useNotify();
@@ -108,22 +123,18 @@ export function WorkersPage() {
       return n;
     });
 
-  const rows = (data?.workers ?? []).filter(
-    (w) =>
-      matches(
-        q,
-        w.id,
-        w.origin,
-        w.instanceName,
-        w.session?.controller?.id,
-        w.session?.controller?.account_username,
-        w.session?.controller?.user_agent,
-      ) &&
-      (filter === "all" ||
-        (filter === "inuse" && w.is_in_use) ||
-        (filter === "free" && w.is_connected && !w.is_in_use) ||
-        (filter === "offline" && !w.is_connected)),
+  const searched = (data?.workers ?? []).filter((w) =>
+    matches(
+      q,
+      w.id,
+      w.origin,
+      w.instanceName,
+      w.session?.controller?.id,
+      w.session?.controller?.account_username,
+      w.session?.controller?.user_agent,
+    ),
   );
+  const rows = searched.filter((w) => !filter || STATES.find((s) => s.value === filter)!.test(w));
   const rate = (w: Worker) => w.time_windowed_stats?.[RATE_KEY[win]] ?? 0;
   const lat = (w: Worker) => w.time_windowed_stats?.[MS_KEY[win]] ?? 0;
 
@@ -145,7 +156,7 @@ export function WorkersPage() {
 
   // One table per instance, in config.toml order; empty instances keep their
   // header unless a search or filter is narrowing the list.
-  const narrowed = !!q || filter !== "all";
+  const narrowed = !!q || !!filter;
   const groups = visible
     .map((i) => ({ id: i.id, name: i.name, rows: sorted.filter((w) => w.instanceId === i.id) }))
     .filter((g) => g.rows.length || !narrowed);
@@ -156,21 +167,24 @@ export function WorkersPage() {
     <div className="animate-in flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SearchBox value={q} onChange={setQ} placeholder="Search worker, origin, account…" />
-        <div className="flex flex-wrap gap-2">
-          <Toggle
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <FilterMenu
+            className="min-w-0 flex-1 sm:flex-none"
+            label="Worker state"
+            allLabel="All workers"
             value={filter}
             onChange={setFilter}
-            options={[
-              { value: "all", label: `All (${data?.workers.length ?? 0})` },
-              { value: "inuse", label: "In use" },
-              { value: "free", label: "Free" },
-              { value: "offline", label: "Offline" },
-            ]}
+            total={searched.length}
+            options={STATES.map((s) => ({ value: s.value, label: s.label, color: s.color, count: searched.filter(s.test).length }))}
           />
-          <Toggle
+          {/* Not a filter: the window Req/s and Latency are averaged over. */}
+          <FilterMenu
+            className="shrink-0"
+            label="Averaged over"
+            icon={Timer}
             value={win}
             onChange={(v) => setWin(v as Win)}
-            options={(["30s", "1m", "5m", "15m"] as const).map((w) => ({ value: w, label: w }))}
+            options={WINDOWS}
           />
         </div>
       </div>
