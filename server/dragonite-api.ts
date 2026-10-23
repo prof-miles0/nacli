@@ -323,6 +323,19 @@ export async function saveArea(d: DragoniteConfig, id: number, area: Raw, timeou
   await call(d, `/v2/areas/${id}`, timeoutMs, { method: "PATCH", body, json: false });
 }
 
+export const KOJI_MODES = ["pokemon", "fort", "quest"] as const;
+export type KojiMode = (typeof KOJI_MODES)[number];
+
+/**
+ * Has Dragonite ask Kōji for one mode's route of an area and store it, as the
+ * admin's Kōji buttons do (GET /recalculate/{id}/{mode}?bootstrap=): the
+ * saved route is replaced right away. `bootstrap` asks for a route that
+ * covers the whole geofence (Pokémon and Fort only).
+ */
+export async function recalculateRoute(d: DragoniteConfig, id: number, mode: KojiMode, bootstrap: boolean, timeoutMs: number) {
+  await call(d, `/recalculate/${id}/${mode}?bootstrap=${bootstrap}`, timeoutMs, { method: "GET", json: false });
+}
+
 /**
  * Starts or stops quest scanning, as the admin's quest buttons do: in one area
  * (POST /quest/{id}/start|stop) or in every active area ("all"). `clear`

@@ -184,7 +184,7 @@ export interface HistoryPoint {
   weightInUse: number;
   /** Worker responses per second since previous poll, by status. */
   responseRates?: Record<string, number>;
-  /** Controllers rejected for lack of a free worker, per hour (VictoriaMetrics only). */
+  /** Controllers rejected for lack of a free worker, per hour (Zapdos only). */
   rejectedPerHour?: number;
 }
 
@@ -198,22 +198,24 @@ export interface AppInfo {
   title: string;
   pollIntervalMs: number;
   /** Where chart history comes from. */
-  /** "victoriametrics" when at least one Rotom has data there (the rest use memory). */
-  historySource: "victoriametrics" | "memory";
-  /** Golbat charts available (its vm_instance in VictoriaMetrics, or its url for memory). */
+  /** "zapdos" when at least one Rotom has data there (the rest use memory). */
+  historySource: "zapdos" | "memory";
+  /** Golbat charts available (its zapdos_instance in Zapdos, or its url for memory). */
   golbat: boolean;
   /** [golbat] has a url: the Dashboard map can ask Golbat for device locations. */
   golbatMap: boolean;
   /** Basemap for that map, from [map] in config.toml. */
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
-  /** Configured Dragonites (empty without [[dragonite]] + [victoriametrics]). */
+  /** Configured Dragonites (empty without [[dragonite]] + [zapdos]). */
   dragonite: DragoniteInfo[];
   /** Where the charts of every Dragonite together come from, and how far back. */
-  dragoniteHistory?: { source: "victoriametrics" | "memory"; maxRangeMs: number };
-  /** How far back Golbat's charts go (VictoriaMetrics or memory). */
+  dragoniteHistory?: { source: "zapdos" | "memory"; maxRangeMs: number };
+  /** How far back Golbat's charts go (Zapdos or memory). */
   golbatHistoryMs?: number;
   /** Golbat's API and a Dragonite API are configured: per-area statistics. */
   golbatStats: boolean;
+  /** How often the statistics are kept for their 24 h history (unset: no history). */
+  golbatStatsHistoryMs?: number;
   instances: InstanceInfo[];
 }
 
@@ -288,7 +290,7 @@ export interface DragoniteInfo {
   accounts: boolean;
   /** How far back its own charts go (0: no charts for it). */
   historyMs: number;
-  /** Its charts come from VictoriaMetrics (else from memory). */
+  /** Its charts come from Zapdos (else from memory). */
   fromVm: boolean;
 }
 
@@ -456,6 +458,12 @@ export interface AreaStats {
   /** Golbat cut a list at its result limit: the counts are a lower bound. */
   partial?: boolean;
   error?: string;
+}
+
+/** The statistics over the last 24 h: the totals, or one area. */
+export interface AreaStatsHistory {
+  intervalMs: number;
+  points: { t: number; stats: AreaStatsCounts }[];
 }
 
 export interface AreaStatsResponse {
@@ -764,6 +772,8 @@ export interface DragoniteStatus {
   hasKoji?: boolean;
   /** testing or stable, from the version's suffix. */
   channel?: "testing" | "stable";
+  /** On the stable channel: a newer version out only on testing. */
+  testing?: string;
   /** Newest version on its channel, when it is newer than the running one. */
   update?: string;
   rateLimit?: {
@@ -785,8 +795,24 @@ export interface SystemStatus {
   checkedAt: number;
   releases?: { stable?: string; testing?: string; checkedAt: number; error?: string };
   dragonite: DragoniteStatus[];
-  golbat?: { metrics: boolean; lastSeenS?: number; rawOk?: number; rawErrors?: number; api: boolean; apiOk?: boolean; apiError?: string };
-  victoriaMetrics: { configured: boolean; local: boolean };
+  golbat?: {
+    metrics: boolean;
+    lastSeenS?: number;
+    rawOk?: number;
+    rawErrors?: number;
+    api: boolean;
+    apiOk?: boolean;
+    apiError?: string;
+  };
+  /** Zapdos (its VictoriaMetrics): whether it answers, and which instances it has data for. */
+  zapdos: {
+    configured: boolean;
+    /** Some charts come from the history kept in memory. */
+    local: boolean;
+    health?: { ok: boolean; latencyMs?: number; error?: string };
+    /** Each instance with a zapdos_instance: whether Zapdos has its data (unknown before the first check). */
+    instances: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string; hasData?: boolean }[];
+  };
   /** RotomNG on GitHub: newest stable and newest of all (pre-releases included). */
   rotomReleases?: { stable?: string; latest?: string; checkedAt: number; error?: string };
   /** Each Rotom's version against those. */

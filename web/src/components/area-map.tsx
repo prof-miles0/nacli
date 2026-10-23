@@ -153,8 +153,12 @@ export function AreaMap({ layers, basemap, className }: { layers: MapLayer[]; ba
   const count = (l: MapLayer) => (l.points?.length ? `${fmt.int(l.points.length)} points` : `${fmt.int((l.polygons ?? []).reduce((n, p) => n + (p[0]?.length ?? 0), 0))} points`);
 
   return (
-    <div className={cn("relative overflow-hidden rounded-lg border", className)}>
-      <div ref={el} className="h-full min-h-72 w-full" />
+    // The map fills its frame, which the caller sizes (a height, or a share of a flex column).
+    <div className={cn("relative min-h-48 overflow-hidden rounded-lg border", className)}>
+      {/* MapLibre makes its container relative: an absolute wrapper gives it a definite size. */}
+      <div className="absolute inset-0">
+        <div ref={el} className="h-full w-full" />
+      </div>
       {shown.length ? (
         <div className="map-glass absolute top-2 left-2 flex max-w-[calc(100%-1rem)] flex-col gap-1 rounded-lg px-2.5 py-2 text-xs">
           {shown.map((l) => (

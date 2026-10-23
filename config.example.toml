@@ -16,14 +16,14 @@ session_ttl = "24h"
 secure_cookies = false
 # RotomNG and Dragonite are read on demand, when a page needs them. This is how
 # often the metrics of RotomNG, Dragonite and Golbat are read for the history
-# kept in memory (only for those VictoriaMetrics does not cover). A shorter
+# kept in memory (only for those Zapdos does not cover). A shorter
 # interval gives finer charts and uses more memory.
 poll_interval = "10s"
 # Maximum wait time per request to an instance.
 request_timeout = "8s"
 # How much chart history is kept in memory. Charts use it for every instance
-# that VictoriaMetrics does not cover: without [victoriametrics], without a
-# vm_instance, or with a vm_instance that has no data there.
+# that Zapdos does not cover: without [zapdos], without a
+# zapdos_instance, or with a zapdos_instance that has no data there.
 history_retention = "24h"
 
 # Basemap for every map in Nacli: the Dashboard (devices, area geofences and
@@ -48,17 +48,16 @@ tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"
 username = "admin"
 password = "change-this-password"
 
-# One [[stack]] block per deployment: a RotomNG and, if present, the Dragonite
-# that sends it its controllers.
-#   name  Name shown in the dashboard. If there is a Dragonite, it must match the
-#         one in its user agent ("Dragonite/x.y (Dragonite - <name>)"):
-#         that is how the dashboard checks that its controllers reach this Rotom.
+# One [[stack]] block per deployment: its RotomNG, its Dragonite, or both (the
+# Dragonite sends its controllers to the RotomNG of the same stack). Each part is
+# optional: Nacli shows the pages that what you give it allows.
+#   name  Name shown in the dashboard.
 #
-# [stack.rotom]
+# [stack.rotom]  (optional)
 #   url          Root of the RotomNG http_listener, WITHOUT the /api suffix.
 #   api_secret   That instance's http_listener.secret (omit it if it has none).
-#   vm_instance  (optional) Its `instance` label in VictoriaMetrics; only used with
-#                [victoriametrics]. Without it, or if it has no data there, its
+#   zapdos_instance  (optional) Its `instance` label in Zapdos; only used with
+#                [zapdos]. Without it, or if it has no data there, its
 #                charts come from memory (history_retention).
 #   headers      (optional) Extra headers, e.g. for a proxy in front.
 #   basic_auth   (optional) { username = "...", password = "..." } if the proxy requires Basic Auth.
@@ -71,8 +70,8 @@ password = "change-this-password"
 #                Nacli also reads its /metrics every poll_interval and keeps history_retention
 #                in memory; for that, url must be Dragonite's own (the admin does not
 #                expose /metrics).
-#   vm_instance  (optional) Its `instance` label in VictoriaMetrics; only used with
-#                [victoriametrics]. Without it, or if it has no data there, its
+#   zapdos_instance  (optional) Its `instance` label in Zapdos; only used with
+#                [zapdos]. Without it, or if it has no data there, its
 #                charts come from memory. A chart of several Dragonites comes from
 #                memory as soon as one of them does.
 #   api_secret   (optional) Sent as the X-Dragonite-Admin-Secret header.
@@ -83,19 +82,19 @@ name = "Exeggcute"
 
 [stack.rotom]
 url = "http://10.0.0.10:7072"
-vm_instance = "rotom-ng"
+zapdos_instance = "rotom-ng"
 api_secret = ""
 
 [stack.dragonite]
 url = "http://10.0.0.10:7272"
-vm_instance = "dragonite"
+zapdos_instance = "dragonite"
 
 [[stack]]
 name = "Lunala"
 
 [stack.rotom]
 url = "http://10.0.0.11:7072"
-vm_instance = "rotom-ng-lunala"
+zapdos_instance = "rotom-ng-lunala"
 # headers = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
 # basic_auth = { username = "rotom", password = "..." }
 
@@ -104,21 +103,27 @@ vm_instance = "rotom-ng-lunala"
 #                     map (with their trails), Golbat's state on Status, and
 #                     the Golbat Metrics page from history_retention in memory
 #                     (Nacli reads its /metrics every poll_interval).
-#   vm_instance       (optional) Its `instance` label in VictoriaMetrics; only
-#                     used with [victoriametrics]: the Metrics page then draws
+#   zapdos_instance       (optional) Its `instance` label in Zapdos; only
+#                     used with [zapdos]: the Metrics page then draws
 #                     the stored data (up to 30 days). Without it, or if it has
 #                     no data there, the page comes from memory.
+#   stats_poll_interval  (optional, needs url) How often the Statistics page's
+#                     figures are taken for their history; the last 24 h stay
+#                     in memory and the page charts them. Empty: no history.
+#                     At least "1m"; each take asks Golbat about every area.
 # [golbat]
 # url = "http://10.0.0.20:9001"
 # api_secret = "..."
-# vm_instance = "golbat"
+# zapdos_instance = "golbat"
+# stats_poll_interval = "5m"
 
-# (Optional) VictoriaMetrics or Prometheus already scraping the instances'
-# metrics. Charts come from here (up to 30 days) for every instance whose
-# vm_instance has data; the rest keep using the history in memory. Nacli checks
+# (Optional) Zapdos (https://github.com/UnownHash/Zapdos), UnownHash's metrics
+# stack: url points at its VictoriaMetrics (port 8428), which already scrapes the
+# instances' metrics. Charts come from here (up to 30 days) for every instance whose
+# zapdos_instance has data; the rest keep using the history in memory. Nacli checks
 # which ones have data at startup, on every config change and every 5 minutes.
-# [victoriametrics]
-# url = "https://vm.example.com"
+# [zapdos]
+# url = "http://10.0.0.30:8428"
 # username = "vmuser"            # Basic Auth, if required
 # password = "..."
 # bearer_token = "..."           # alternative to username/password

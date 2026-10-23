@@ -1,6 +1,6 @@
-// In-memory stand-in for VictoriaMetrics: it reads the /metrics of every
+// In-memory stand-in for Zapdos: it reads the /metrics of every
 // RotomNG, Dragonite (with a url) and Golbat (with a url) whose charts come
-// from memory (no [victoriametrics], no vm_instance, or no data for it there),
+// from memory (no [zapdos], no zapdos_instance, or no data for it there),
 // keeps `history_retention` of their series, and answers the same PromQL the
 // charts send (via promql.ts) in VictoriaMetrics' JSON.
 
@@ -111,7 +111,7 @@ export const LOCAL_GOLBAT = "golbat";
  */
 export const localRotom = (id: string) => `rotom-${id}`;
 
-/** Which instances read /metrics into memory: those VictoriaMetrics does not cover. */
+/** Which instances read /metrics into memory: those Zapdos does not cover. */
 export interface MemoryTargets {
   rotom: (id: string) => boolean;
   dragonite: (id: string) => boolean;
@@ -146,7 +146,7 @@ export class LocalMetrics implements SeriesSource {
   /**
    * (Re)configures from config.toml and from which instances need memory.
    * Dragonites are kept under their id, RotomNGs under localRotom(id); an
-   * instance that moves to VictoriaMetrics drops what was kept for it.
+   * instance that moves to Zapdos drops what was kept for it.
    */
   apply(cfg: AppConfig, need: MemoryTargets) {
     this.retentionMs = cfg.historyRetentionMs;
@@ -226,7 +226,7 @@ export class LocalMetrics implements SeriesSource {
       const now = Date.now();
       const samples = parsePrometheus(await res.text())
         .filter((s) => d.keep(s.name) && Number.isFinite(s.value))
-        // The same labels VictoriaMetrics would leave, so the queries need no
+        // The same labels Zapdos would leave, so the queries need no
         // change: its own instance/job, and the target's renamed exported_*.
         .map((s) => {
           const { job, instance, ...rest } = s.labels;

@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Check, CirclePlay, CircleStop, X } from "lucide-react";
 import { useState } from "react";
 import type { DragoniteArea, DragoniteInfo } from "@shared/types";
+import { useStacks } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Button, Modal, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -35,7 +36,8 @@ export function QuestModal({
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<Awaited<ReturnType<typeof endpoints.questAction>>>();
   const start = action === "start";
-  const where = area ? area.name : `every active area of ${stack.name}`;
+  const { on } = useStacks();
+  const where = area ? area.name : `every active area${on(stack.id, "of")}`;
   const name = (id: string) => areas.find((a) => String(a.id) === id)?.name ?? `Area ${id}`;
 
   const run = async () => {

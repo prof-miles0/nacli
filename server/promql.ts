@@ -1,5 +1,5 @@
 // A small PromQL evaluator, enough for the panel queries in dragonite.ts when
-// VictoriaMetrics is not configured and the samples live in memory
+// Zapdos is not configured and the samples live in memory
 // (local-metrics.ts). Supported: selectors with =, !=, =~, !~ matchers and
 // [range]; rate, increase, avg/min/max_over_time, timestamp, scalar, time,
 // round, clamp_min, clamp_max; sum/min/max/avg/count with by/without; + - * / between vectors

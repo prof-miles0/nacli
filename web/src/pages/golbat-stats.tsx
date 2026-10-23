@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import type { AreaStats, AreaStatsCounts } from "@shared/types";
+import { ChartCard, TimeChart } from "@/components/charts";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
-import { SearchBox, matches, useSorted } from "@/components/table-tools";
+import { StackTag } from "@/components/stack-tag";
+import { SearchBox, Toggle, matches, useSorted } from "@/components/table-tools";
 import { Card, HoverCard, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
-import { useInstanceColor } from "@/lib/state";
+import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
 import { useState } from "react";
 
@@ -105,14 +108,13 @@ function Cells({ s, partial }: { s: AreaStatsCounts; partial?: boolean }) {
 }
 
 /** Per area, for phones: the same figures as label/value pairs. */
-function AreaCard({ a, dot }: { a: AreaStats; dot: string }) {
+function AreaCard({ a, picked, onPick }: { a: AreaStats; picked?: boolean; onPick?: () => void }) {
   const s = a.stats;
   return (
-    <Card className="gap-3 p-4">
+    <Card className={cn("gap-3 p-4", onPick && "cursor-pointer", picked && "border-primary/60")} onClick={onPick}>
       <div className="flex items-center gap-2">
-        <span className="size-2.5 shrink-0 rounded-full" style={{ background: dot }} />
         <span className="min-w-0 flex-1 truncate font-semibold">{a.area}</span>
-        <span className="text-xs text-muted-foreground">{a.stackName}</span>
+        <StackTag id={a.stack} className="text-xs text-muted-foreground" />
       </div>
       {!s ? (
         <p className="text-sm text-red-300">{a.error}</p>
@@ -139,6 +141,60 @@ function AreaCard({ a, dot }: { a: AreaStats; dot: string }) {
   );
 }
 
+/** The figures the history can chart, each read from one take. */
+const METRICS = [
+  { key: "quests", label: "Quests", value: (s: AreaStatsCounts) => pct(quests(s), s.quests.stops), format: (v: number) => fmt.pct(v) },
+  { key: "pokemon", label: "Pokémon", value: (s: AreaStatsCounts) => s.pokemon.active, format: n },
+  { key: "invasions", label: "Invasions", value: rocket, format: n },
+  { key: "raids", label: "Raids", value: (s: AreaStatsCounts) => s.gyms.raids, format: n },
+  { key: "lures", label: "Lures", value: (s: AreaStatsCounts) => s.stops.lures, format: n },
+  { key: "battles", label: "Max battles", value: (s: AreaStatsCounts) => s.stations.battles, format: n },
+] as const;
+type MetricKey = (typeof METRICS)[number]["key"];
+
+/**
+ * The last 24 h of one figure (stats_poll_interval in [golbat]): of every
+ * area together, or of the area picked in the table.
+ */
+function StatsHistory({ area, multi, onClear }: { area?: AreaStats; multi: boolean; onClear: () => void }) {
+  const [metric, setMetric] = useState<MetricKey>("quests");
+  const key = area ? `${area.stack}:${area.areaId}` : undefined;
+  const q = useQuery({
+    queryKey: ["golbat-area-stats-history", key ?? "all"],
+    queryFn: () => endpoints.golbatAreaStatsHistory(key),
+    refetchInterval: 60_000,
+  });
+  const m = METRICS.find((x) => x.key === metric)!;
+  const series = [{ key: "v", name: area ? area.area : "All areas", color: "var(--series-1)" }];
+  const data = (q.data?.points ?? []).map((p) => ({ t: p.t, v: m.value(p.stats) }));
+  return (
+    <ChartCard
+      title="Last 24 h"
+      subtitle={area ? `${area.area}${area.stackName && multi ? ` · ${area.stackName}` : ""}` : "All areas · pick one in the table to see it alone"}
+      series={series}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          {area ? (
+            <button type="button" onClick={onClear} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground">
+              <X className="size-3" />
+              All areas
+            </button>
+          ) : null}
+          <Toggle value={metric} onChange={(v) => setMetric(v as MetricKey)} options={METRICS.map((x) => ({ value: x.key, label: x.label }))} />
+        </div>
+      }
+    >
+      {q.error ? (
+        <p className="text-sm text-red-300">{(q.error as Error).message}</p>
+      ) : !q.data ? (
+        <Spinner className="mx-auto my-16" />
+      ) : (
+        <TimeChart data={data} series={series} format={m.format} axisFormat={m.format} integer={metric !== "quests"} height={200} />
+      )}
+    </ChartCard>
+  );
+}
+
 /**
  * What Golbat sees in each Dragonite area right now: quests (as the admin's
  * dashboard counts them), active Pokémon, invasions, raids, lures and Max
@@ -147,6 +203,9 @@ function AreaCard({ a, dot }: { a: AreaStats; dot: string }) {
 export function GolbatStatsPage() {
   const color = useInstanceColor();
   const [search, setSearch] = useState("");
+  const { data: app } = useAppInfo();
+  // The area the history shows ("stack:areaId"); none: every area together.
+  const [picked, setPicked] = useState<string>();
   const q = useQuery({ queryKey: ["golbat-area-stats"], queryFn: endpoints.golbatAreaStats, refetchInterval: 120_000 });
   const rows = (q.data?.areas ?? []).filter((a) => matches(search, a.area, a.stackName));
   const multi = new Set((q.data?.areas ?? []).map((a) => a.stack)).size > 1;
@@ -191,6 +250,10 @@ export function GolbatStatsPage() {
         <HeadStat label="Max battles" value={n(t.stations.battles)} hint={`${n(t.stations.active)} active Power Spots`} />
       </div>
 
+      {app?.golbatStatsHistoryMs ? (
+        <StatsHistory area={q.data.areas.find((a) => `${a.stack}:${a.areaId}` === picked)} multi={multi} onClear={() => setPicked(undefined)} />
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SearchBox value={search} onChange={setSearch} placeholder="Search areas…" />
         <span className="text-xs text-muted-foreground">
@@ -200,7 +263,12 @@ export function GolbatStatsPage() {
 
       <div className="flex flex-col gap-3 sm:hidden">
         {sorted.map((a) => (
-          <AreaCard key={`${a.stack}:${a.areaId}`} a={a} dot={dot(a)} />
+          <AreaCard
+            key={`${a.stack}:${a.areaId}`}
+            a={a}
+            picked={picked === `${a.stack}:${a.areaId}`}
+            onPick={app?.golbatStatsHistoryMs ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
+          />
         ))}
       </div>
 
@@ -219,7 +287,11 @@ export function GolbatStatsPage() {
           </thead>
           <tbody>
             {sorted.map((a) => (
-              <tr key={`${a.stack}:${a.areaId}`}>
+              <tr
+                key={`${a.stack}:${a.areaId}`}
+                className={cn(app?.golbatStatsHistoryMs && "cursor-pointer", picked === `${a.stack}:${a.areaId}` && "bg-accent/60")}
+                onClick={app?.golbatStatsHistoryMs ? () => setPicked((p) => (p === `${a.stack}:${a.areaId}` ? undefined : `${a.stack}:${a.areaId}`)) : undefined}
+              >
                 <td>
                   <div className="flex items-center gap-2">
                     {multi ? <span className="size-2.5 shrink-0 rounded-full" style={{ background: dot(a) }} title={a.stackName} /> : null}

@@ -2,9 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CirclePlus, Copy, Lock, Plus, Power, PowerOff, Trash2, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DragoniteInfo, ProxyEntry, ProxyImportResult, ProxyInstance } from "@shared/types";
-import { type FolderTab, FolderPanel, FolderTabs, tabEdge } from "@/components/folder-tabs";
+import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { type MenuItem, MenuButton } from "@/components/menu-button";
+import { StackTag } from "@/components/stack-tag";
 import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
 import { toast } from "@/components/toaster";
 import { Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
@@ -127,7 +128,7 @@ export function DragoniteProxiesPage() {
 
   const sums = q.data?.stacks ?? [];
   const tabs: FolderTab[] = [
-    { id: "", label: "All", summary: q.data ? `${q.data.proxies.length} proxies` : undefined },
+    { id: "", label: "All", compact: true },
     ...stacks.map((d) => {
       const sm = sums.find((x) => x.stack === d.id);
       return { id: d.id, label: d.name, color: d.rotom ? color(d.rotom) : undefined, summary: sm ? `${sm.good}/${sm.total} OK` : undefined };
@@ -190,13 +191,13 @@ export function DragoniteProxiesPage() {
       if (i.id === undefined) continue;
       items.push({
         key: `t-${i.stack}`,
-        label: `${i.enabled ? "Disable" : "Enable"} on ${stackName(i.stack)}`,
+        label: `${i.enabled ? "Disable" : "Enable"}${multi ? ` on ${stackName(i.stack)}` : ""}`,
         hint: i.enabled ? "Dragonite stops using it" : "Dragonite starts using it again",
         icon: i.enabled ? PowerOff : Power,
         onSelect: async () => {
           try {
             await endpoints.setProxyEnabled(i.stack, i.id!, !i.enabled);
-            toast({ text: `${endpointLabel(p)} ${i.enabled ? "disabled" : "enabled"} on ${stackName(i.stack)}` });
+            toast({ text: `${endpointLabel(p)} ${i.enabled ? "disabled" : "enabled"}${multi ? ` on ${stackName(i.stack)}` : ""}` });
             refresh();
           } catch (e) {
             toast({ text: (e as Error).message, error: true });
@@ -218,7 +219,7 @@ export function DragoniteProxiesPage() {
       if (i.id === undefined) continue;
       items.push({
         key: `rm-${i.stack}`,
-        label: `Remove from ${stackName(i.stack)}`,
+        label: `Remove${multi ? ` from ${stackName(i.stack)}` : ""}`,
         hint: "Deletes it from that Dragonite",
         icon: Trash2,
         danger: true,
@@ -232,7 +233,7 @@ export function DragoniteProxiesPage() {
     <div className="animate-in flex flex-col gap-3">
       <div className="flex flex-col">
         {stacks.length > 1 ? <FolderTabs label="Stack" tabs={tabs} value={current} onChange={setTab} /> : null}
-        <FolderPanel color={tabs.find((t) => t.id === current)?.color} edge={stacks.length > 1 ? tabEdge(tabs, current) : undefined}>
+        <FolderPanel color={tabs.find((t) => t.id === current)?.color} tabbed={stacks.length > 1}>
           {!q.data ? (
             <Spinner />
           ) : (
@@ -254,7 +255,7 @@ export function DragoniteProxiesPage() {
         </FolderPanel>
       </div>
       {errors.length ? (
-        <p className="text-sm text-red-300">{errors.map((x) => `${stackName(x.stack)}: ${x.error}`).join(" · ")}</p>
+        <p className="text-sm text-red-300">{errors.map((x) => (multi ? `${stackName(x.stack)}: ${x.error}` : x.error)).join(" · ")}</p>
       ) : null}
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
@@ -435,7 +436,7 @@ export function DragoniteProxiesPage() {
                   setRemoving(undefined);
                   try {
                     await endpoints.deleteProxy(i.stack, i.id!);
-                    toast({ text: `${endpointLabel(p)} removed from ${stackName(i.stack)}` });
+                    toast({ text: `${endpointLabel(p)} removed${multi ? ` from ${stackName(i.stack)}` : ""}` });
                     refresh();
                   } catch (e) {
                     toast({ text: (e as Error).message, error: true });
@@ -473,6 +474,7 @@ function countLines(text: string) {
 function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onClose: () => void; onDone: () => void }) {
   const [text, setText] = useState("");
   const [targets, setTargets] = useState<string[]>(stacks.map((d) => d.id));
+  const multi = stacks.length > 1;
   const [prefix, setPrefix] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [skipExisting, setSkipExisting] = useState(true);
@@ -493,7 +495,7 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
       const failed = r.results.filter((x) => x.error);
       toast({
         tone: failed.length ? (created ? "warning" : "error") : "success",
-        text: `${fmt.int(created)} ${created === 1 ? "proxy" : "proxies"} imported${failed.length ? ` · failed on ${failed.map((x) => name(x.stack)).join(", ")}` : ""}`,
+        text: `${fmt.int(created)} ${created === 1 ? "proxy" : "proxies"} imported${failed.length ? ` · failed${multi ? ` on ${failed.map((x) => name(x.stack)).join(", ")}` : ""}` : ""}`,
       });
       onDone();
     } catch (e) {
@@ -523,7 +525,7 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
             </Button>
             <Button onClick={run} disabled={!count.ok || !targets.length || busy}>
               {busy ? <Spinner className="size-4" /> : <Upload />}
-              Import into {targets.length === stacks.length ? "all" : targets.map(name).join(", ") || "…"}
+              {multi ? `Import into ${targets.length === stacks.length ? "all" : targets.map(name).join(", ") || "…"}` : "Import"}
             </Button>
           </>
         )
@@ -534,7 +536,7 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
           {results.map((r) => (
             <div key={r.stack} className="flex items-center gap-2 rounded-lg border px-3 py-2">
               {r.error ? <X className="size-4 text-red-400" /> : <Check className="size-4 text-green-400" />}
-              <span className="font-medium">{name(r.stack)}</span>
+              <StackTag id={r.stack} className="font-medium" />
               <span className="text-muted-foreground">
                 {r.error ? r.error : `${r.created} added · ${r.skipped} already existed${r.reloaded ? " · proxies reloaded" : ""}`}
               </span>
@@ -554,10 +556,12 @@ function ImportModal({ stacks, onClose, onDone }: { stacks: DragoniteInfo[]; onC
               className="w-full rounded-md border bg-background/40 px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
-          <div className="flex flex-col gap-1.5">
-            <Label>Import into</Label>
-            <StackPicker stacks={stacks} value={targets} onChange={setTargets} />
-          </div>
+          {multi ? (
+            <div className="flex flex-col gap-1.5">
+              <Label>Import into</Label>
+              <StackPicker stacks={stacks} value={targets} onChange={setTargets} />
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5">
               <Label>Name prefix (optional)</Label>
@@ -634,6 +638,8 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
   const [error, setError] = useState<string>();
   const [results, setResults] = useState<ProxyImportResult[]>();
   const stackName = (id: string) => stacks.find((d) => d.id === id)?.name ?? id;
+  // One stack: nothing to pick, and naming it would only repeat itself.
+  const multi = stacks.length > 1;
 
   const addressOk = ADDRESS.test(address.trim().replace(/^https?:\/\//i, ""));
   const authOk = !user.trim() === !password && !/[\s:@]/.test(user.trim());
@@ -664,9 +670,9 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
       toast({
         tone: failed.length ? (created.length ? "warning" : "error") : created.length ? "success" : "info",
         text: created.length
-          ? `“${name.trim()}” created on ${created.map((x) => stackName(x.stack)).join(", ")}${failed.length ? ` · failed on ${failed.map((x) => stackName(x.stack)).join(", ")}` : ""}`
+          ? `“${name.trim()}” created${multi ? ` on ${created.map((x) => stackName(x.stack)).join(", ")}` : ""}${failed.length ? ` · failed on ${failed.map((x) => stackName(x.stack)).join(", ")}` : ""}`
           : failed.length
-            ? failed.map((x) => `${stackName(x.stack)}: ${x.error}`).join(" · ")
+            ? failed.map((x) => (multi ? `${stackName(x.stack)}: ${x.error}` : x.error)).join(" · ")
             : "Already in those stacks",
       });
       onDone();
@@ -692,7 +698,7 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
             </Button>
             <Button onClick={run} disabled={!canRun}>
               {busy ? <Spinner className="size-4" /> : <Plus />}
-              Create in {targets.length === stacks.length ? "all" : targets.map(stackName).join(", ") || "…"}
+              {multi ? `Create in ${targets.length === stacks.length ? "all" : targets.map(stackName).join(", ") || "…"}` : "Create"}
             </Button>
           </>
         )
@@ -703,7 +709,7 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
           {results.map((r) => (
             <div key={r.stack} className="flex items-center gap-2 rounded-lg border px-3 py-2">
               {r.error ? <X className="size-4 text-red-400" /> : <Check className="size-4 text-green-400" />}
-              <span className="font-medium">{stackName(r.stack)}</span>
+              <StackTag id={r.stack} className="font-medium" />
               <span className="text-muted-foreground">{r.error ? r.error : r.created ? `created${r.reloaded ? " · proxies reloaded" : ""}` : "already had it"}</span>
             </div>
           ))}
@@ -736,15 +742,19 @@ function CreateModal({ stacks, proxies, onClose, onDone }: { stacks: DragoniteIn
             </label>
           </div>
           {!authOk ? <p className="-mt-2 text-[11px] text-amber-400">Username and password go together; the username cannot contain spaces, “:” or “@”.</p> : null}
-          <div className="flex flex-col gap-1.5">
-            <Label>Create in</Label>
-            <StackPicker stacks={stacks} value={targets} onChange={setTargets} note={note} />
-            {clashes.length ? (
-              <span className="text-[11px] text-amber-400">
-                The name “{name.trim()}” already exists on {clashes.map(stackName).join(", ")}: change it or deselect that stack.
-              </span>
-            ) : null}
-          </div>
+          {multi ? (
+            <div className="flex flex-col gap-1.5">
+              <Label>Create in</Label>
+              <StackPicker stacks={stacks} value={targets} onChange={setTargets} note={note} />
+              {clashes.length ? (
+                <span className="text-[11px] text-amber-400">
+                  The name “{name.trim()}” already exists on {clashes.map(stackName).join(", ")}: change it or deselect that stack.
+                </span>
+              ) : null}
+            </div>
+          ) : clashes.length ? (
+            <span className="text-[11px] text-amber-400">The name “{name.trim()}” already exists: change it.</span>
+          ) : null}
           <div className="flex flex-col gap-2">
             <label className="flex cursor-pointer items-center gap-2">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="size-4 accent-[var(--primary)]" />

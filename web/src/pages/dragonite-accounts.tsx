@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLef
 import { useEffect, useState } from "react";
 import type { AccountCounts, AccountLevelCounts, DragoniteAccount, DragoniteInfo } from "@shared/types";
 import { CreateAccountModal, ImportAccountsModal } from "@/components/account-forms";
+import { StackTag } from "@/components/stack-tag";
 import { SearchBox } from "@/components/table-tools";
 import { AccentCard, Badge, Button, Card, HoverCard, Label, Spinner, StackBar, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -154,7 +155,8 @@ function InstanceCard({ d, color }: { d: DragoniteInfo; color: string }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <Label>Accounts</Label>
-          <span className="text-lg font-bold">{d.name}</span>
+          {/* The stack's name only tells several apart; with one, the total is the headline. */}
+          <StackTag id={d.id} className="text-lg font-bold" />
         </div>
         {stats.data ? (
           <div className="text-right">

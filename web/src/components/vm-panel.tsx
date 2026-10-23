@@ -3,7 +3,7 @@ import { ChartCard, type Series, TimeChart } from "@/components/charts";
 import { fmt, SERIES } from "@/lib/utils";
 
 /**
- * Turns VictoriaMetrics series into chart rows on a full time grid, so a
+ * Turns Zapdos series into chart rows on a full time grid, so a
  * missing point leaves a gap instead of the line jumping across it. Past 8
  * series the colours would repeat, so the smallest (by total) fold into "Others".
  */

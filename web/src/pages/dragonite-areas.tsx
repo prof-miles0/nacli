@@ -181,15 +181,7 @@ export function DragoniteAreasPage() {
         stacks={withApi}
         search={search}
         tabs={withApi.length > 1 ? <StackTabs stacks={withApi} value={current.id} onChange={choose} /> : undefined}
-        tabEdge={
-          withApi.length > 1
-            ? withApi[0].id === current.id
-              ? "left"
-              : withApi.at(-1)!.id === current.id
-                ? "right"
-                : undefined
-            : undefined
-        }
+        tabbed={withApi.length > 1}
         toolbar={<SearchBox value={search} onChange={setSearch} placeholder="Search areas…" />}
         actions={
           <Button onClick={() => setCreating(true)}>
@@ -203,7 +195,7 @@ export function DragoniteAreasPage() {
   );
 }
 
-/** The stacks as folder tabs, each closed one with its active areas and workers. */
+/** The stacks as folder tabs, each one with its enabled areas out of all. */
 function StackTabs({ stacks, value, onChange }: { stacks: DragoniteInfo[]; value: string; onChange: (id: string) => void }) {
   return <FolderTabs label="Stack" tabs={useStackTabs(stacks)} value={value} onChange={onChange} />;
 }
@@ -220,12 +212,11 @@ export function useStackTabs(stacks: DragoniteInfo[]): FolderTab[] {
   return stacks.map((d, i) => {
     const data = areas[i].data;
     const on = data?.areas.filter((a) => a.enabled).length;
-    const live = data?.areas.reduce((n, a) => n + (a.enabled ? (a.live?.active ?? 0) : 0), 0);
     return {
       id: d.id,
       label: d.name,
       color: d.rotom ? color(d.rotom) : undefined,
-      summary: data ? `${on}/${data.areas.length} areas · ${live} workers` : undefined,
+      summary: data ? `${on}/${data.areas.length} areas` : undefined,
     };
   });
 }
@@ -236,7 +227,7 @@ function StackAreas({
   stacks,
   search,
   tabs,
-  tabEdge,
+  tabbed,
   toolbar,
   actions,
 }: {
@@ -246,7 +237,8 @@ function StackAreas({
   /** Folder tabs drawn on top of the header, the selected one joined to it. */
   tabs?: React.ReactNode;
   /** Which outer corner the selected tab sits on (that corner goes square). */
-  tabEdge?: "left" | "right";
+  /** Under folder tabs: square top corners, since the tabs cover its whole top edge. */
+  tabbed?: boolean;
   /** Shown between the header and the areas (the search box). */
   toolbar?: React.ReactNode;
   /** Buttons at the right of that row (e.g. "New area"). */
@@ -538,8 +530,7 @@ function StackAreas({
       <div
         className={cn(
           "relative flex flex-col gap-3 overflow-hidden rounded-xl border px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-5",
-          tabEdge === "left" && "rounded-tl-none",
-          tabEdge === "right" && "rounded-tr-none",
+          tabbed && "rounded-t-none",
         )}
         style={{ background: tabs ? `linear-gradient(180deg, ${tabTint(stackColor)}, var(--card) 85%)` : `linear-gradient(90deg, color-mix(in oklab, ${stackColor} 14%, var(--card)), var(--card) 55%)` }}
       >

@@ -1,9 +1,9 @@
-// Chart history read from VictoriaMetrics, which already scrapes every
+// Chart history read from Zapdos, which already scrapes every
 // RotomNG's /api/metrics. Returns the same HistoryPoint shape the in-memory
 // history uses, so the frontend does not care where it came from.
 
 import type { HistoryPoint } from "../shared/types.ts";
-import type { RotomInstanceConfig, VictoriaMetricsConfig } from "./config.ts";
+import type { RotomInstanceConfig, ZapdosConfig } from "./config.ts";
 import { vmPost } from "./vmpanels.ts";
 
 interface RangeResult {
@@ -19,9 +19,9 @@ export function stepFor(rangeMs: number): number {
   return Math.max(10_000, Math.ceil(rangeMs / 240 / 10_000) * 10_000);
 }
 
-/** A range query, to VictoriaMetrics or to the history kept in memory (vm.local). */
+/** A range query, to Zapdos or to the history kept in memory (vm.local). */
 async function queryRange(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   query: string,
   start: number,
   end: number,
@@ -34,22 +34,22 @@ async function queryRange(
     data?: { result: RangeResult[] };
     error?: string;
   };
-  if (json.status !== "success") throw new Error(`VictoriaMetrics: ${json.error ?? "error"}`);
+  if (json.status !== "success") throw new Error(`Zapdos: ${json.error ?? "error"}`);
   return json.data?.result ?? [];
 }
 
 /** Label matcher for the configured instances plus the optional extra selector. */
-function selector(vm: VictoriaMetricsConfig, instances: RotomInstanceConfig[]): string {
+function selector(vm: ZapdosConfig, instances: RotomInstanceConfig[]): string {
   const L = vm.instanceLabel;
   // Regex-escape each name, then escape the result for a PromQL string literal.
-  const re = instances.map((i) => i.vmInstance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const re = instances.map((i) => i.zapdosInstance.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   return [`${L}=~"${re.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`, vm.selector]
     .filter(Boolean)
     .join(",");
 }
 
 export async function vmHistory(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   instances: RotomInstanceConfig[],
   rangeMs: number,
   timeoutMs: number,
@@ -117,7 +117,7 @@ export async function vmHistory(
 
   const out: Record<string, HistoryPoint[]> = {};
   for (const i of instances) {
-    const m = byInst.get(i.vmInstance);
+    const m = byInst.get(i.zapdosInstance);
     out[i.id] = m ? [...m.values()].sort((a, b) => a.t - b.t) : [];
   }
   return out;
@@ -148,7 +148,7 @@ export const DEVICE_METRICS = Object.keys(DEVICE_QUERIES) as DeviceMetric[];
 
 /** One series per device (by origin), keyed by instance id. Memory is in KB, as RotomNG reports it. */
 export async function vmDeviceSeries(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   instances: RotomInstanceConfig[],
   metric: DeviceMetric,
   rangeMs: number,
@@ -171,7 +171,7 @@ export async function vmDeviceSeries(
   const out: Record<string, DeviceSeries[]> = {};
   for (const i of instances) out[i.id] = [];
   for (const r of results) {
-    const inst = instances.find((i) => i.vmInstance === r.metric[L]);
+    const inst = instances.find((i) => i.zapdosInstance === r.metric[L]);
     if (!inst) continue;
     out[inst.id].push({
       origin: r.metric.origin || "?",
@@ -197,7 +197,7 @@ export interface ControllerDemand {
  * without a LOGIN following it; the gap estimates how many were turned away.
  */
 export async function vmControllerDemand(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   instances: RotomInstanceConfig[],
   windowS: number,
   timeoutMs: number,
@@ -218,8 +218,8 @@ export async function vmControllerDemand(
   ]);
   const out: Record<string, ControllerDemand> = {};
   for (const i of instances) {
-    const a = Math.round(attempts.get(i.vmInstance) ?? 0);
-    const s = Math.round(served.get(i.vmInstance) ?? 0);
+    const a = Math.round(attempts.get(i.zapdosInstance) ?? 0);
+    const s = Math.round(served.get(i.zapdosInstance) ?? 0);
     out[i.id] = { attempts: a, served: s, rejected: Math.max(0, a - s) };
   }
   return out;

@@ -18,11 +18,13 @@ proxies, modes and schedules without jumping between admins.
 
 ---
 
-Nacli sits in front of one or more **stacks** (a [RotomNG](https://github.com/UnownHash/RotomNG),
-the [Dragonite](https://github.com/UnownHash/Dragonite-Public) that feeds it and, optionally, Golbat)
-and brings them together in a single web app with its own login. It looks and feels like the
-Dragonite admin, works the same on a phone, and keeps every secret on the server: the browser
-only ever talks to Nacli.
+Nacli sits in front of one or more **stacks** (a [RotomNG](https://github.com/UnownHash/RotomNG)
+and the [Dragonite](https://github.com/UnownHash/Dragonite-Public) that feeds it), plus
+[Golbat](https://github.com/UnownHash/Golbat) and, for the stored charts,
+[Zapdos](https://github.com/UnownHash/Zapdos), and brings them together in a single web app
+with its own login. It looks and feels like the Dragonite admin, works the same on a phone,
+and keeps every secret on the server: the browser only ever talks to Nacli. **Nothing is
+required**: every part is optional, and Nacli shows the pages that what you give it allows.
 
 ## ✨ Features
 
@@ -39,11 +41,13 @@ only ever talks to Nacli.
 
 ### 🩺 Status
 
-- Per Dragonite: whether **Kōji** and **Golbat** are connected, its **global rate limit** and
+- Per Dragonite: whether **[Kōji](https://github.com/TurtIeSocks/Koji)** and **Golbat** are connected, its **global rate limit** and
   why it last dropped, and whether **Dragonite** and **RotomNG** are **up to date** with their
   latest GitHub releases (all green when they are).
 - The Dragonite admin's controls, per instance: **pause or reset the global rate limit**,
   **reload proxies**, **reload accounts** and **reload Dragonite**.
+- **Golbat** and **Zapdos** side by side: whether Golbat's API and metrics answer, and whether
+  Zapdos' VictoriaMetrics is healthy and has data for each instance.
 - An **alerts bar on every page** for anything that needs attention: an instance offline, a
   degraded rate limit, controllers reaching the wrong Rotom, Rotom rejecting controllers,
   Golbat not reporting, or an account present in more than one stack.
@@ -57,7 +61,7 @@ only ever talks to Nacli.
 | **Unbound Modes** | Level, Invasion and Scout modes together: **create, edit, delete and copy** them. Scout jobs on a map, the scout queue (and clearing it), Invasion status charts, Level progress per account, and the areas that answer scout requests. |
 | **Proxies** | Every stack's proxies in one list, counted once however many stacks share them. **Create** a proxy in one or all stacks, **import** a list, **copy** proxies (keeping their names) to other stacks, enable, disable or delete them. |
 | **Scheduler** | Manage **schedules** and **groups**, read the **run ledger**, see what is active now and any diagnostics, **run** a schedule now, run the quest migration, and **copy a schedule** to another stack. |
-| **Metrics** | Dragonite's charts, from VictoriaMetrics or from the last 24 h kept in memory. |
+| **Metrics** | Dragonite's charts, from Zapdos or from the last 24 h kept in memory. |
 
 ### 📱 Rotom
 
@@ -67,7 +71,10 @@ only ever talks to Nacli.
 
 ### 🦇 Golbat
 
-- Golbat's Grafana charts, from VictoriaMetrics or from the last 24 h kept in memory.
+- **Statistics** per Dragonite area: quests scanned, active Pokémon, invasions, raids, lures
+  and Max battles, counted inside each geofence. With `stats_poll_interval`, their evolution
+  over the last 24 h, for every area together or for one.
+- Golbat's Grafana charts, from Zapdos or from the last 24 h kept in memory.
 
 ### And also
 
@@ -133,11 +140,11 @@ name = "Exeggcute"
 [stack.rotom]
 url = "http://10.0.0.10:7072"      # RotomNG http_listener, without /api
 api_secret = "..."                 # its http_listener.secret
-vm_instance = "rotom-ng"
+zapdos_instance = "rotom-ng"
 
 [stack.dragonite]
 url = "http://10.0.0.10:7272"      # Dragonite's API (or its admin + "/api")
-vm_instance = "dragonite"
+zapdos_instance = "dragonite"
 ```
 
 <details>
@@ -152,9 +159,9 @@ vm_instance = "dragonite"
 | `session_secret` | random | Signs session cookies. If empty, one is generated at startup and sessions are lost on restart. |
 | `session_ttl` | `"24h"` | How long a sign-in lasts. |
 | `secure_cookies` | `false` | Mark the cookie `Secure`; also on automatically behind a proxy sending `X-Forwarded-Proto: https`. |
-| `poll_interval` | `"10s"` | How often the metrics of RotomNG, Dragonite and Golbat are read for the history in memory (only for those VictoriaMetrics does not cover). |
+| `poll_interval` | `"10s"` | How often the metrics of RotomNG, Dragonite and Golbat are read for the history in memory (only for those Zapdos does not cover). |
 | `request_timeout` | `"8s"` | Longest wait for any instance. |
-| `history_retention` | `"24h"` | Chart history kept in memory, for every instance VictoriaMetrics does not cover. |
+| `history_retention` | `"24h"` | Chart history kept in memory, for every instance Zapdos does not cover. |
 
 #### `[[users]]`
 
@@ -162,21 +169,21 @@ One block per person who can sign in: `username` and `password`.
 
 #### `[[stack]]`
 
-One block per deployment, with a `name`. If it has a Dragonite, the name must match the one in
-its user agent (`Dragonite - <name>`): that is how Nacli checks its controllers reach the Rotom
-of the same stack.
+One block per deployment, with a `name` and its RotomNG, its Dragonite or both. Nacli checks
+that a Dragonite's controllers reach the Rotom of its own stack by the name each Dragonite
+reports (with its `url`), so the stack's `name` can be anything.
 
-- **`[stack.rotom]`**: `url` (root of the `http_listener`, **without** `/api`), `api_secret`
-  and, optionally, `vm_instance`, `headers` and
+- **`[stack.rotom]`** (optional): `url` (root of the `http_listener`, **without** `/api`), `api_secret`
+  and, optionally, `zapdos_instance`, `headers` and
   `basic_auth = { username = "...", password = "..." }` for a proxy in front.
 - **`[stack.dragonite]`** (optional): `url` of its API, either Dragonite's own
-  (`http://host:7272`) or its admin plus `/api`; and optionally `vm_instance`, `api_secret`
+  (`http://host:7272`) or its admin plus `/api`; and optionally `zapdos_instance`, `api_secret`
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
   controls act on that Dragonite.
 
-`vm_instance` is each instance's `instance` label in VictoriaMetrics, and it only counts
-with `[victoriametrics]` (see below).
+`zapdos_instance` is each instance's `instance` label in Zapdos, and it only counts
+with `[zapdos]` (see below).
 
 #### `[map]`
 
@@ -191,18 +198,23 @@ public URLs and a client key. The example uses CARTO's Voyager and Dark Matter s
 
 - `url` and `api_secret`: Golbat's API. Enables the devices on the Dashboard map (with their
   trails), Golbat's state on Status, and the Golbat Metrics page from memory.
-- `vm_instance` (optional): its `instance` label in VictoriaMetrics, for the Metrics page to
+- `zapdos_instance` (optional): its `instance` label in Zapdos, for the Metrics page to
   draw the stored data.
+- `stats_poll_interval` (optional, needs `url`): how often the Statistics figures are taken
+  to chart their last 24 h (kept in memory). Empty or missing: no history. At least `"1m"`.
 
-#### `[victoriametrics]` (optional)
+#### `[zapdos]` (optional)
 
-Where the charts come from, up to 30 days: `url`, `username`/`password` or `bearer_token`,
-`instance_label` (default `instance`) and an optional `selector` added to every query.
+[Zapdos](https://github.com/UnownHash/Zapdos) is UnownHash's metrics stack: vmagent scrapes
+RotomNG, Dragonite and Golbat into VictoriaMetrics, with Grafana on top. Point `url` at its
+VictoriaMetrics (port 8428) and the charts come from there, up to 30 days. Also
+`username`/`password` or `bearer_token`, `instance_label` (default `instance`) and an
+optional `selector` added to every query.
 
-For every instance VictoriaMetrics does not cover, Nacli keeps the last `history_retention`
+For every instance Zapdos does not cover, Nacli keeps the last `history_retention`
 (24 h) in memory, by reading its metrics every `poll_interval`: RotomNG's `/api/metrics`, and
-Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from VictoriaMetrics only when its `vm_instance` has data
-there; **without `[victoriametrics]`, without a `vm_instance`, or with one that has no data,
+Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from Zapdos only when its `zapdos_instance` has data
+there; **without `[zapdos]`, without a `zapdos_instance`, or with one that has no data,
 they come from memory**. Nacli checks which ones have data at startup, whenever
 `config.toml` changes and every 5 minutes; an instance whose data stops arriving starts its
 memory history from that moment. Rotom's charts can mix both; a Dragonite chart that adds
@@ -240,13 +252,13 @@ flowchart LR
     N -- "status, actions" --> R["RotomNG"]
     N -- "API" --> D["Dragonite"]
     N -- "device locations" --> G["Golbat"]
-    N -- "PromQL" --> V[("VictoriaMetrics")]
+    N -- "PromQL" --> V[("Zapdos<br/>(VictoriaMetrics)")]
     N -. "release checks" .-> GH["GitHub"]
 ```
 
 - The **server** (`server/`, Node + [Hono](https://hono.dev)) talks to each RotomNG and
   Dragonite API on demand, when a page needs it (RotomNG's answers are shared for 3 s), and
-  asks VictoriaMetrics for the charts. Only for the instances VictoriaMetrics does not cover
+  asks Zapdos for the charts. Only for the instances Zapdos does not cover
   does it read their metrics regularly, to keep the last 24 h in memory.
 - The **web app** (`web/`, React + Vite + Tailwind) only ever talks to Nacli's `/api`.
 - `shared/` holds the types both sides use.
@@ -266,7 +278,7 @@ flowchart LR
 ## 📁 Project layout
 
 ```
-server/        API server: config, auth, RotomNG, Dragonite, Golbat and VictoriaMetrics
+server/        API server: config, auth, RotomNG, Dragonite, Golbat and Zapdos
 shared/        Types shared by the server and the web app
 web/           React app (pages, components, styles)
 Dockerfile     Two-stage image: build on Debian, run on Alpine as a non-root user

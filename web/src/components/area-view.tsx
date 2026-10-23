@@ -3,11 +3,12 @@
 // of them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Pencil, Save } from "lucide-react";
+import { Pencil, Save } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { DragoniteArea, DragoniteInfo } from "@shared/types";
 import { type MapLayer, pointsOf, polygonsOf } from "@/components/area-layers";
-import { AreaForm, AreaMapView, type Draft, draftOf, type FormTab, problems, SwitchRow, toAreaFull } from "@/components/area-form";
+import { AreaForm, AreaMapView, type Draft, draftOf, type FormTab, type Koji, problems, routeText, toAreaFull } from "@/components/area-form";
+import { StackTag, useStacks } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Badge, Button, Label, Modal, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -17,43 +18,48 @@ import { cn, fmt } from "@/lib/utils";
 type Raw = Record<string, unknown>;
 const mode = (a: Raw, k: string) => (a[k] ?? {}) as Raw;
 const yes = (v: unknown) => (v ? "Yes" : "No");
-const pts = (n: number) => `${fmt.int(n)} points`;
+const pts = (n: number) => (n ? `${fmt.int(n)} points` : "–");
 const fencePoints = (g: unknown) => polygonsOf(g).reduce((n, p) => n + (p[0]?.length ?? 0), 0);
-const override = (g: unknown) => (g ? `${pts(fencePoints(g))} (override)` : "– (inherits base)");
+const override = (g: unknown) => (g ? `Own, ${pts(fencePoints(g))}` : "Inherited");
 
 function useFullArea(stack: DragoniteInfo, area: DragoniteArea) {
   return useQuery({ queryKey: ["dragonite-area-full", stack.id, area.id], queryFn: () => endpoints.areaFull(stack.id, area.id) });
 }
 
 /**
- * One mode's settings, as the admin's show page lists them. A disabled mode
- * starts collapsed (just its title), and opens on a click.
+ * One mode's settings as a single row: its name and state, then each setting
+ * as a small label / value tile (they wrap on phones). A mode that is off shows
+ * just its name.
  */
 function Section({ title, on, rows }: { title: string; on?: boolean; rows: [string, ReactNode][] }) {
   return (
-    <details open={on !== false} className="group rounded-lg border">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center gap-1.5">
-          <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
-          <h4 className="font-semibold">{title}</h4>
-        </span>
-        {on === undefined ? null : <Badge tone={on ? "good" : "neutral"}>{on ? "Enabled" : "Disabled"}</Badge>}
-      </summary>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 px-3 pb-3 text-sm">
-        {rows.map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className="min-w-0 truncate text-right tabular-nums">{v}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
+    <div className={cn("flex flex-col gap-x-4 gap-y-2 rounded-lg border px-3 py-2.5 sm:flex-row sm:items-center", on === false && "opacity-60")}>
+      <div className="flex shrink-0 items-center gap-1.5 sm:w-48">
+        <h4 className="font-semibold whitespace-nowrap">{title}</h4>
+        {on === undefined ? null : (
+          <Badge tone={on ? "good" : "neutral"} className="ml-auto sm:ml-1">
+            {on ? "On" : "Off"}
+          </Badge>
+        )}
+      </div>
+      {on === false ? null : (
+        <dl className="grid min-w-0 flex-1 grid-cols-3 gap-x-2 gap-y-2 sm:grid-cols-[repeat(auto-fill,minmax(6.5rem,1fr))] sm:gap-x-3">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex min-w-0 flex-col">
+              <dt className="truncate text-[11px] text-muted-foreground">{k}</dt>
+              <dd className="truncate text-sm font-medium tabular-nums">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
 /** The admin's "Show": the area on a map and every mode's settings. */
 export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: DragoniteInfo; area: DragoniteArea; onClose: () => void; onEdit: () => void }) {
   const { data: app } = useAppInfo();
+  const { multi } = useStacks();
   const q = useFullArea(stack, area);
   const a = q.data;
   // Spawnpoints, from Golbat when it is configured.
@@ -94,23 +100,23 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
       ) : !a ? (
         <Spinner className="mx-auto my-20" />
       ) : (
-        <div className="grid h-full min-h-0 gap-4 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(18rem,2fr)] lg:overflow-hidden">
-          <AreaMapView area={a} basemap={app?.map} extra={spawnLayer} className="h-80 lg:h-full" />
-          <div className="flex min-h-0 flex-col gap-3 lg:overflow-auto lg:pr-1">
+        <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto">
+          <AreaMapView area={a} basemap={app?.map} extra={spawnLayer} className="h-72 shrink-0 sm:h-auto sm:min-h-32 sm:flex-1" />
+          <div className="flex shrink-0 flex-col gap-2">
             <Section
               title="General"
               rows={[
                 ["ID", String(a.id ?? area.id)],
-                ["Dragonite", stack.name],
+                ...(multi ? ([["Stack", <StackTag id={stack.id} />]] as [string, ReactNode][]) : []),
                 ["Geofence", pts(fencePoints(a.geofence))],
                 ...(app?.golbatMap
                   ? ([
                       [
                         "Active spawns",
                         spawns.error ? (
-                          <span className="text-red-300">unavailable</span>
+                          <span className="text-red-300">Unavailable</span>
                         ) : !spawns.data ? (
-                          <Spinner className="ml-auto size-3.5" />
+                          <Spinner className="size-3.5" />
                         ) : (
                           <span title="Spawnpoints with a Pokémon right now, from Golbat">
                             {spawns.data.partial ? "≥ " : ""}
@@ -128,7 +134,7 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
               rows={[
                 ["Workers", fmt.int(Number(mode(a, "pokemon_mode").workers) || 0)],
                 ["Scout", yes(mode(a, "pokemon_mode").enable_scout)],
-                ["Populate invasions", yes(mode(a, "pokemon_mode").invasion)],
+                ["Invasions", yes(mode(a, "pokemon_mode").invasion)],
                 ["Route", pts(pointsOf(mode(a, "pokemon_mode").route).length)],
                 ["Geofence", override(mode(a, "pokemon_mode").geofence)],
               ]}
@@ -137,8 +143,8 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
               title="Quest Mode"
               on={!!a.enable_quests}
               rows={[
-                ["Workers", Number(mode(a, "quest_mode").workers) ? fmt.int(Number(mode(a, "quest_mode").workers)) : "All Pokémon workers"],
-                ["Quest hours", Array.isArray(mode(a, "quest_mode").hours) && (mode(a, "quest_mode").hours as number[]).length ? (mode(a, "quest_mode").hours as number[]).join(", ") : "–"],
+                ["Workers", Number(mode(a, "quest_mode").workers) ? fmt.int(Number(mode(a, "quest_mode").workers)) : <span title="Uses the Pokémon and Fort mode workers">Shared</span>],
+                ["Hours", Array.isArray(mode(a, "quest_mode").hours) && (mode(a, "quest_mode").hours as number[]).length ? (mode(a, "quest_mode").hours as number[]).join(", ") : "–"],
                 ["Route", pts(pointsOf(mode(a, "quest_mode").route).length)],
                 ["Geofence", override(mode(a, "quest_mode").geofence)],
               ]}
@@ -148,9 +154,9 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
               on={!!a.enable_forts}
               rows={[
                 ["Workers", fmt.int(Number(mode(a, "fort_mode").workers) || 0)],
-                ["Priority raids", yes(mode(a, "fort_mode").prio_raid)],
-                ["Scan showcases", yes(mode(a, "fort_mode").showcase)],
-                ["Populate invasions", yes(mode(a, "fort_mode").invasion)],
+                ["Raids first", yes(mode(a, "fort_mode").prio_raid)],
+                ["Showcases", yes(mode(a, "fort_mode").showcase)],
+                ["Invasions", yes(mode(a, "fort_mode").invasion)],
                 ["Route", pts(pointsOf(mode(a, "fort_mode").route).length)],
                 ["Full route", pts(pointsOf(mode(a, "fort_mode").full_route).length)],
                 ["Geofence", override(mode(a, "fort_mode").geofence)],
@@ -162,7 +168,7 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
               rows={[
                 ["Workers", fmt.int(Number(mode(a, "rare_pokemon_mode").workers) || 0)],
                 ["Permyriad", fmt.int(Number(mode(a, "rare_pokemon_mode").permyriad) || 0)],
-                ["Extra Pokémon IDs", Array.isArray(mode(a, "rare_pokemon_mode").extra) && (mode(a, "rare_pokemon_mode").extra as number[]).length ? (mode(a, "rare_pokemon_mode").extra as number[]).join(", ") : "–"],
+                ["Extra IDs", Array.isArray(mode(a, "rare_pokemon_mode").extra) && (mode(a, "rare_pokemon_mode").extra as number[]).length ? (mode(a, "rare_pokemon_mode").extra as number[]).join(", ") : "–"],
               ]}
             />
           </div>
@@ -191,7 +197,8 @@ export function AreaEditModal({ stack, area, onClose }: { stack: DragoniteInfo; 
 function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: DragoniteArea; base: Raw; onClose: () => void }) {
   const qc = useQueryClient();
   const { data: app } = useAppInfo();
-  const [initial] = useState(() => draftOf(base));
+  const { on } = useStacks();
+  const [initial, setInitial] = useState(() => draftOf(base));
   const [d, setD] = useState<Draft>(initial);
   const [enabled, setEnabled] = useState(!!base.enabled);
   const [tab, setTab] = useState<FormTab>("general");
@@ -203,12 +210,26 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
   const dirty = enabled !== !!base.enabled || JSON.stringify(d) !== JSON.stringify(initial);
   const canSave = dirty && !Object.keys(errs).length && !busy;
 
+  // Kōji: Dragonite stores the new route at once, so it lands in the form as already saved.
+  const kojiOn = useQuery({ queryKey: ["dragonite-koji", stack.id], queryFn: () => endpoints.kojiAvailable(stack.id), staleTime: 60_000 });
+  const koji: Koji = {
+    available: !!kojiOn.data?.available,
+    run: async (mode, bootstrap) => {
+      const r = await endpoints.kojiRoute(stack.id, area.id, mode, bootstrap);
+      const route = routeText(r.route);
+      setD((x) => ({ ...x, [mode]: { ...x[mode], route } }));
+      setInitial((x) => ({ ...x, [mode]: { ...x[mode], route } }));
+      qc.invalidateQueries({ queryKey: ["dragonite-area-full", stack.id, area.id] });
+      return r.route.length;
+    },
+  };
+
   const save = async () => {
     setBusy(true);
     setError(undefined);
     try {
       const r = await endpoints.saveAreaFull(stack.id, area.id, toAreaFull(d, base, enabled));
-      toast({ tone: "success", text: `${d.name.trim()} ${r.steps.join(" and ")} on ${stack.name}` });
+      toast({ tone: "success", text: `${d.name.trim()} ${r.steps.join(" and ")}${on(stack.id)}` });
       qc.invalidateQueries({ queryKey: ["dragonite-areas", stack.id] });
       qc.invalidateQueries({ queryKey: ["dragonite-area-full", stack.id, area.id] });
       qc.invalidateQueries({ queryKey: ["dragonite-geofences"] });
@@ -224,11 +245,12 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
     <Modal
       open
       large
+      tall
       onClose={onClose}
       title={
         <span className="flex items-center gap-2">
           Edit {area.name}
-          <span className="text-sm font-normal text-muted-foreground">· {stack.name}</span>
+          <StackTag id={stack.id} className="text-sm font-normal text-muted-foreground" />
         </span>
       }
       footer={
@@ -244,7 +266,7 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
       }
     >
       <form
-        className="flex flex-col gap-4"
+        className="flex min-h-full flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
           if (canSave) save();
@@ -257,9 +279,8 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
           tab={tab}
           setTab={setTab}
           basemap={app?.map}
-          general={
-            <SwitchRow title="Area enabled" hint="Its workers scan it while it is on." on={enabled} onChange={setEnabled} />
-          }
+          enabled={{ on: enabled, onChange: setEnabled }}
+          koji={koji}
         />
         {error ? <p className="text-red-300">{error}</p> : null}
         <button type="submit" hidden />

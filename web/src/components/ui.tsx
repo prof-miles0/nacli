@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
@@ -219,6 +220,9 @@ export function StackBar({ segments }: { segments: { label: string; value: numbe
   );
 }
 
+let openModals = 0;
+const modalStack: object[] = [];
+
 export function Modal({
   open,
   onClose,
@@ -228,10 +232,17 @@ export function Modal({
   wide,
   large,
   full,
+  tall,
+  icon,
+  description,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
+  /** A small icon before the title. */
+  icon?: ReactNode;
+  /** A line under the title. */
+  description?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
@@ -239,35 +250,76 @@ export function Modal({
   large?: boolean;
   /** Near full-screen, for content like logs. */
   full?: boolean;
+  /** A fixed height (as tall as `full`), so it does not grow or shrink with its content, e.g. between tabs. */
+  tall?: boolean;
 }) {
+  // Escape closes only the topmost modal (one can open over another).
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const me = {};
+    modalStack.push(me);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && modalStack.at(-1) === me) close.current();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      modalStack.splice(modalStack.indexOf(me), 1);
+    };
+  }, [open]);
+  // The page behind stays still while any modal is open (they can stack).
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    if (openModals++ === 0) {
+      const width = document.body.getBoundingClientRect().width;
+      html.classList.add("modal-open");
+      // Browsers without scrollbar-gutter drop the scrollbar when the overflow
+      // is hidden: pad its width back so nothing behind the modal shifts.
+      const grew = document.body.getBoundingClientRect().width - width;
+      if (grew > 0) html.style.paddingRight = `${grew}px`;
+    }
+    return () => {
+      if (--openModals === 0) {
+        html.classList.remove("modal-open");
+        html.style.paddingRight = "";
+      }
+    };
+  }, [open]);
   if (!open) return null;
   // Portal to <body> so a modal opened from a table cell does not inherit its
   // alignment, overflow or stacking.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-left">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 text-left sm:p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <div
         role="dialog"
         aria-modal
         className={cn(
-          "animate-in relative flex max-h-[90vh] w-full flex-col gap-4 overflow-hidden rounded-xl border bg-card p-5 shadow-2xl",
-          full ? "h-[88vh] max-w-6xl" : large ? "max-w-5xl" : wide ? "max-w-3xl" : "max-w-md",
+          "animate-in relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl ring-1 ring-white/5",
+          (full || tall) && "h-[88vh]",
+          full ? "max-w-6xl" : large ? "max-w-5xl" : wide ? "max-w-3xl" : "max-w-md",
         )}
       >
-        <div className="flex items-start justify-between gap-4">
-          <h3 className="text-lg font-semibold">{title}</h3>
-          <button type="button" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label="Close">
+        <div className="flex items-start gap-3 border-b px-5 py-4">
+          {icon ? <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg border bg-muted/40 text-muted-foreground [&_svg]:size-4.5">{icon}</span> : null}
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 self-center">
+            <h3 className="text-base leading-snug font-semibold sm:text-lg">{title}</h3>
+            {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="-mr-1.5 grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Close"
+          >
             <X className="size-4" />
           </button>
         </div>
-        <div className={cn("min-h-0 overflow-auto text-sm", full && "flex-1 overflow-hidden")}>{children}</div>
-        {footer ? <div className="flex justify-end gap-2">{footer}</div> : null}
+        <div className={cn("min-h-0 overflow-auto overscroll-contain px-5 py-4 text-sm", full && "flex-1 overflow-hidden", tall && "flex-1")}>{children}</div>
+        {footer ? <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/20 px-5 py-3">{footer}</div> : null}
       </div>
     </div>,
     document.body,
@@ -288,7 +340,8 @@ export function Table({ children, className }: { children: ReactNode; className?
     // Border on the outer box, scrolling on the inner one, so callers can pad
     // the bottom (e.g. for a control on the edge) without covering the scrollbar.
     <div className={cn("overflow-hidden rounded-xl border bg-card", className)}>
-      <div className="overflow-x-auto">
+      {/* A size container, so a row's content can match the visible width (100cqw) while the columns scroll. */}
+      <div className="@container overflow-x-auto">
       <table className="w-full text-sm [&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:tracking-wide [&_th]:text-muted-foreground [&_th]:uppercase [&_th]:whitespace-nowrap [&_thead_tr]:border-b [&_tbody_tr]:border-b [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-accent/40">
         {children}
       </table>

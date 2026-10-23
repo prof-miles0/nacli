@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Check, FileUp, Plus, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
 import type { AccountImportResult, DragoniteInfo } from "@shared/types";
+import { StackTag } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Button, Input, Label, Modal, Select, Spinner, Table } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -83,7 +84,8 @@ export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[
   const [level, setLevel] = useState("1");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const stackName = stacks.find((d) => d.id === stack)?.name;
+  // With one stack, its name would only repeat itself.
+  const stackName = stacks.length > 1 ? stacks.find((d) => d.id === stack)?.name : undefined;
   const canRun = !!stack && noSpaces(username) && noSpaces(password) && levelOk(level) && !busy;
 
   const run = async () => {
@@ -91,7 +93,7 @@ export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[
     setError(undefined);
     try {
       await endpoints.createAccount(stack!, { username, password, provider, level: Number(level) });
-      toast({ tone: "success", text: `Account ${username} created in ${stackName}` });
+      toast({ tone: "success", text: `Account ${username} created${stackName ? ` in ${stackName}` : ""}` });
       forget();
       onClose();
     } catch (e) {
@@ -125,10 +127,12 @@ export function CreateAccountModal({ stacks, onClose }: { stacks: DragoniteInfo[
           if (canRun) run();
         }}
       >
-        <div className={field}>
-          <Label>Stack</Label>
-          <StackChoice stacks={stacks} value={stack} onChange={setStack} />
-        </div>
+        {stacks.length > 1 ? (
+          <div className={field}>
+            <Label>Stack</Label>
+            <StackChoice stacks={stacks} value={stack} onChange={setStack} />
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={field}>
             <Label>Username</Label>
@@ -208,6 +212,8 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<AccountImportResult>();
   const name = (id?: string) => stacks.find((d) => d.id === id)?.name ?? id ?? "";
+  // " into X" / " in X", only when there is more than one stack to tell apart.
+  const into = (prep: string) => (stacks.length > 1 && stack ? ` ${prep} ${name(stack)}` : "");
   const accounts = parseAccounts(csv);
   const releasedS = useNow ? USE_NOW : Math.floor(new Date(released).getTime() / 1000);
   const withSpaces = accounts.filter((a) => /\s/.test(a.username) || /\s/.test(a.password)).length;
@@ -221,7 +227,7 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
       setResult(r);
       toast({
         tone: r.inserted ? (r.elsewhere.length ? "warning" : "success") : "info",
-        text: `${fmt.int(r.inserted)} account${r.inserted === 1 ? "" : "s"} imported into ${name(stack)}${
+        text: `${fmt.int(r.inserted)} account${r.inserted === 1 ? "" : "s"} imported${into("into")}${
           r.elsewhere.length ? ` · ${fmt.int(r.elsewhere.length)} left out (in another stack)` : ""
         }`,
       });
@@ -250,7 +256,7 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
             <Button onClick={run} disabled={!canRun}>
               {busy ? <Spinner className="size-4" /> : <Upload />}
               Import {accounts.length ? fmt.int(accounts.length) : ""}
-              {stack ? ` into ${name(stack)}` : ""}
+              {into("into")}
             </Button>
           </>
         )
@@ -258,8 +264,8 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
     >
       {result ? (
         <div className="flex flex-col gap-2">
-          <ResultRow ok text={`${fmt.int(result.inserted)} imported into ${name(stack)}`} />
-          {result.alreadyHere ? <ResultRow text={`${fmt.int(result.alreadyHere)} already in ${name(stack)} (skipped by Dragonite)`} /> : null}
+          <ResultRow ok text={`${fmt.int(result.inserted)} imported${into("into")}`} />
+          {result.alreadyHere ? <ResultRow text={`${fmt.int(result.alreadyHere)} already ${stacks.length > 1 ? `in ${name(stack)}` : "there"} (skipped by Dragonite)`} /> : null}
           {result.repeated ? <ResultRow text={`${fmt.int(result.repeated)} repeated in the list`} /> : null}
           {result.elsewhere.length ? (
             <div className="flex flex-col gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
@@ -270,7 +276,10 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
               <ul className="max-h-40 overflow-auto font-mono text-xs text-muted-foreground">
                 {result.elsewhere.map((o) => (
                   <li key={o.username}>
-                    {o.username} · {o.stacks.map(name).join(", ")}
+                    {o.username} ·{" "}
+                    {o.stacks.map((id) => (
+                      <StackTag key={id} id={id} className="mr-2 align-middle" />
+                    ))}
                   </li>
                 ))}
               </ul>
@@ -285,10 +294,12 @@ export function ImportAccountsModal({ stacks, onClose }: { stacks: DragoniteInfo
             if (canRun) run();
           }}
         >
-          <div className={field}>
-            <Label>Stack</Label>
-            <StackChoice stacks={stacks} value={stack} onChange={setStack} />
-          </div>
+          {stacks.length > 1 ? (
+            <div className={field}>
+              <Label>Stack</Label>
+              <StackChoice stacks={stacks} value={stack} onChange={setStack} />
+            </div>
+          ) : null}
           <label className={field}>
             <span className="flex items-center justify-between gap-2">
               <Label>Accounts</Label>

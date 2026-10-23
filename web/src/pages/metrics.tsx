@@ -23,7 +23,7 @@ const RANGES = [
   { value: String(6 * 3_600_000), label: "6h" },
   { value: String(24 * 3_600_000), label: "24h" },
 ];
-/** Only offered when history comes from VictoriaMetrics. */
+/** Only offered when history comes from Zapdos. */
 const LONG_RANGES = [
   { value: String(7 * 86_400_000), label: "7d" },
   { value: String(30 * 86_400_000), label: "30d" },
@@ -79,8 +79,8 @@ export function MetricsPage() {
   const rangeMs = Number(range);
   const { visible } = useInstances();
   const { data: app } = useAppInfo();
-  // From VictoriaMetrics for at least one instance: ranges beyond the memory's 24 h.
-  const fromVm = app?.historySource === "victoriametrics";
+  // From Zapdos for at least one instance: ranges beyond the memory's 24 h.
+  const fromVm = app?.historySource === "zapdos";
   const demand = useQuery({
     queryKey: ["controller-demand"],
     queryFn: endpoints.controllerDemand,
@@ -185,7 +185,7 @@ export function MetricsPage() {
           <TimeChart data={respData} series={statusSeries} format={fmt.rate} stacked />
         </ChartCard>
       </div>
-      {/* Per device: from VictoriaMetrics or from the metrics kept in memory. */}
+      {/* Per device: from Zapdos or from the metrics kept in memory. */}
       <div className="grid gap-4 xl:grid-cols-2">
         <DeviceWorkersSection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />
         <DeviceMemorySection rangeMs={rangeMs} instanceIds={ids} names={Object.fromEntries(visible.map((i) => [i.id, i.name]))} />

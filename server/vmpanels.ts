@@ -2,7 +2,7 @@
 // Dragonite): panel definitions live on the server, the browser only picks a
 // panel id, range and filters, so it can never send arbitrary PromQL.
 
-import type { VictoriaMetricsConfig } from "./config.ts";
+import type { ZapdosConfig } from "./config.ts";
 import { parseDurationMs } from "./promql.ts";
 
 interface QueryDef {
@@ -80,7 +80,7 @@ type VmJson = {
   data?: { result: { metric: Record<string, string>; values?: [number, string][]; value?: [number, string] }[] };
 };
 
-export async function vmPost(vm: VictoriaMetricsConfig, path: string, params: Record<string, string>, timeoutMs: number) {
+export async function vmPost(vm: ZapdosConfig, path: string, params: Record<string, string>, timeoutMs: number) {
   if (vm.local) {
     if (path === "/api/v1/query_range") {
       const step = parseDurationMs(params.step ?? "30s");
@@ -94,13 +94,13 @@ export async function vmPost(vm: VictoriaMetricsConfig, path: string, params: Re
     body: new URLSearchParams(params),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`VictoriaMetrics HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`Zapdos HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<VmJson>;
 }
 
 /** Instant query returning one number per value of `by` (or `""` without it). */
 export async function vmScalars(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   query: string,
   by: string | undefined,
   timeoutMs: number,
@@ -115,7 +115,7 @@ export async function vmScalars(
 }
 
 export async function vmLabelValues(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   label: string,
   match: string,
   timeoutMs: number,
@@ -125,13 +125,13 @@ export async function vmLabelValues(
     headers: vm.headers,
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`VictoriaMetrics HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Zapdos HTTP ${res.status}`);
   const json = (await res.json()) as { data?: string[] };
   return json.data ?? [];
 }
 
 export async function runPanel(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   panel: PanelDef,
   opts: {
     /** Matchers every series of this source carries, e.g. `instance="golbat"`. */
@@ -173,7 +173,7 @@ export async function runPanel(
     panel.queries.map(async (q) => {
       const query = q.expr.replaceAll("$sel", sel).replaceAll("$base", base).replaceAll("$inter", opts.inter);
       const json = await vmPost(vm, "/api/v1/query_range", { query, ...range }, timeoutMs);
-      if (json.status !== "success") throw new Error(`VictoriaMetrics: ${json.error ?? "error"}`);
+      if (json.status !== "success") throw new Error(`Zapdos: ${json.error ?? "error"}`);
       return (json.data?.result ?? []).map((r) => ({
         name: legendFor(q.legend, r.metric),
         axis: q.axis,

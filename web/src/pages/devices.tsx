@@ -181,9 +181,12 @@ export function DevicesPage() {
                       </tr>
                       {open ? (
                         <tr className="bg-muted/20 hover:bg-muted/20!">
-                          <td />
-                          <td colSpan={7} className="pb-4!">
-                            <DeviceDetail d={d} />
+                          <td colSpan={8} className="pb-4!">
+                            {/* From the row's left edge and as wide as the visible table, kept
+                                in view while its columns scroll sideways. */}
+                            <div className="sticky left-3 w-[calc(100cqw-24px)]">
+                              <DeviceDetail d={d} />
+                            </div>
                           </td>
                         </tr>
                       ) : null}
@@ -204,7 +207,7 @@ export function DevicesPage() {
 function DeviceDetail({ d }: { d: Device }) {
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs @md:grid-cols-2 @3xl:grid-cols-4">
         <Field k="Version" v={d.version} />
         <Field k="Public IP" v={d.public_ip} />
         <Field k="MITM memory" v={fmt.kb(d.last_memory?.mitm)} />
@@ -252,7 +255,7 @@ function DeviceDetail({ d }: { d: Device }) {
 export function Field({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-2 border-b border-border/50 py-1">
-      <span className="text-muted-foreground">{k}</span>
+      <span className="whitespace-nowrap text-muted-foreground">{k}</span>
       <span className="truncate text-right font-medium tabular-nums">{v ?? "—"}</span>
     </div>
   );

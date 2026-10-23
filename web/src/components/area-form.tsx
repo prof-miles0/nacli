@@ -2,12 +2,13 @@
 // Fort & Rare Pokémon tabs), shared by "New area" and "Edit": how they are
 // read from an area, checked, and turned back into what Dragonite stores.
 
-import { lazy, type ReactNode, Suspense } from "react";
-import { Castle, ChevronRight, Gem, type LucideIcon, PawPrint, ScrollText, Settings2 } from "lucide-react";
+import { lazy, type ReactNode, Suspense, useDeferredValue, useMemo, useState } from "react";
+import { Castle, Check, CircleCheck, CircleDashed, Gem, Hexagon, type LucideIcon, PawPrint, Pencil, Plus, Route, ScrollText, Settings2, Trash2, TriangleAlert, WandSparkles, Grid2x2 } from "lucide-react";
 import type { AppInfo } from "@shared/types";
-import { Input, Label, Spinner } from "@/components/ui";
+import { Button, HoverCard, Input, Label, Modal, Spinner } from "@/components/ui";
 import { cn, fmt } from "@/lib/utils";
-import { areaLayers, type MapLayer } from "@/components/area-layers";
+import { areaLayers, type MapLayer, polygonsOf } from "@/components/area-layers";
+import { toast } from "@/components/toaster";
 
 type LatLon = { lat: number; lon: number };
 type Geometry = { type: "Polygon" | "MultiPolygon"; coordinates: unknown };
@@ -186,34 +187,67 @@ export function problems(d: Draft) {
 export function Field({ label, error, hint, children }: { label: ReactNode; error?: string; hint?: string; children: ReactNode }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
-      <Label>{label}</Label>
+      {/* The hint (or the error) beside the label, not under the box: the fields stay one line tall. */}
+      <span className="flex min-w-0 items-baseline gap-2">
+        <Label>{label}</Label>
+        {/* "Required" goes unsaid: the create button stays off until it is filled in. */}
+        {error && error !== "Required" ? (
+          <span className="min-w-0 truncate text-[11px] text-amber-400" title={error}>
+            {error}
+          </span>
+        ) : hint ? (
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={hint}>
+            {hint}
+          </span>
+        ) : null}
+      </span>
       {children}
-      {/* "Required" goes unsaid: the create button stays off until it is filled in. */}
-      {error && error !== "Required" ? <span className="text-[11px] text-amber-400">{error}</span> : hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
     </label>
   );
 }
 
+/** An option as a chip: its own drawn check box, and lit up while it is on. */
 export function Tick({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2">
-      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="size-4 accent-[var(--primary)]" />
+    <label
+      className={cn(
+        "inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm whitespace-nowrap transition-colors select-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50",
+        on ? "border-primary/50 bg-primary/10 text-foreground" : "border-input text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="sr-only" />
+      <span className={cn("grid size-4 shrink-0 place-items-center rounded-[5px] border transition-colors", on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/50")}>
+        {on ? <Check className="size-3" strokeWidth={3} /> : null}
+      </span>
       {label}
     </label>
   );
 }
 
-export function Points({ text, kind = "route" }: { text: string; kind?: "route" | "geofence" }) {
+/** A mode's tick boxes in one row, under a label like a field's. */
+function Options({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+      <Label>Options</Label>
+      <div className="flex flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/** Every tab lays its fields out on the same three columns on wide screens. */
+const COLS = "grid items-start gap-3 sm:grid-cols-3";
+
+export function Points({ text, kind = "route", bare }: { text: string; kind?: "route" | "geofence"; bare?: boolean }) {
   let n = 0;
   try {
     n = kind === "geofence" ? geofencePoints(parseGeofence(text)) : parseLines(text).length;
   } catch {
     // The error shows under the box.
   }
+  if (bare) return <>{fmt.int(n)} points</>;
   return <span className="font-normal normal-case text-muted-foreground"> · {fmt.int(n)} points</span>;
 }
 
-const area = "min-h-20 rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /** A mode's heading with its "Enabled" switch, as the admin lays them out. */
 export function ModeHead({ title, on, onChange }: { title: string; on: boolean; onChange: (v: boolean) => void }) {
@@ -241,7 +275,7 @@ export function geofenceText(g: unknown): string {
   return JSON.stringify(g, null, 2);
 }
 
-const routeText = (r: unknown) => (Array.isArray(r) ? (r as LatLon[]).map((p) => `${p.lat},${p.lon}`).join("\n") : "");
+export const routeText = (r: unknown) => (Array.isArray(r) ? (r as LatLon[]).map((p) => `${p.lat},${p.lon}`).join("\n") : "");
 
 /** An area as Dragonite stores it, as the form's text fields. */
 export function draftOf(a: Record<string, unknown>): Draft {
@@ -440,16 +474,6 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
   );
 }
 
-/** A switch for a mode's header, saying its state beside it. */
-function ModeSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <span className="flex items-center gap-2 text-sm font-medium">
-      <Toggle on={on} onChange={onChange} label="Enabled" />
-      <span className={on ? "text-green-400" : "text-muted-foreground"}>{on ? "Enabled" : "Disabled"}</span>
-    </span>
-  );
-}
-
 /** A row with a title, a line of help and a switch at its end (e.g. the area's "Enabled"). */
 export function SwitchRow({ title, hint, on, onChange, dot }: { title: ReactNode; hint?: ReactNode; on: boolean; onChange: (v: boolean) => void; dot?: string }) {
   return (
@@ -469,20 +493,51 @@ export function SwitchRow({ title, hint, on, onChange, dot }: { title: ReactNode
 /** A tab's header: what the mode does and its switch. */
 function TabHead({ title, text, on, onChange, children }: { title: string; text: string; on?: boolean; onChange?: (v: boolean) => void; children?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border bg-muted/20 px-4 py-3">
-      <div className="flex min-w-0 flex-col gap-0.5">
+    <div className="flex items-center justify-between gap-4 rounded-xl border bg-muted/20 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <h4 className="font-semibold">{title}</h4>
         <p className="text-xs text-muted-foreground">{text}</p>
       </div>
-      {on !== undefined && onChange ? <ModeSwitch on={on} onChange={onChange} /> : null}
+      {on !== undefined && onChange ? (
+        // Its state beside the switch: to the left on wide screens, above it on phones.
+        <span className="flex shrink-0 flex-col items-center gap-1 sm:flex-row sm:gap-2">
+          <span className={cn("text-xs font-medium sm:text-sm", on ? "text-green-400" : "text-muted-foreground")}>{on ? "Enabled" : "Disabled"}</span>
+          <Toggle on={on} onChange={onChange} label={`${title} enabled`} />
+        </span>
+      ) : null}
       {children}
     </div>
   );
 }
 
+export type KojiMode = "pokemon" | "fort" | "quest";
+
+/** Asks Kōji, through Dragonite, for a mode's route (editing an area whose Dragonite has Kōji). */
+export interface Koji {
+  available: boolean;
+  /** Dragonite stores the new route; resolves with its point count. */
+  run: (mode: KojiMode, bootstrap: boolean) => Promise<number>;
+}
+
+/** The admin's Kōji buttons for each mode's route. */
+const KOJI_OPTIONS: Record<KojiMode, { bootstrap: boolean; label: string; icon: LucideIcon }[]> = {
+  pokemon: [
+    { bootstrap: false, label: "Get 70m route", icon: WandSparkles },
+    { bootstrap: true, label: "Get 70m bootstrap", icon: Grid2x2 },
+  ],
+  fort: [
+    { bootstrap: false, label: "Get 9x9 route", icon: WandSparkles },
+    { bootstrap: true, label: "Get 9x9 bootstrap", icon: Grid2x2 },
+  ],
+  quest: [{ bootstrap: false, label: "Get quest route", icon: WandSparkles }],
+};
+
+const MODE_NAME: Record<KojiMode, string> = { pokemon: "Pokémon", fort: "Fort", quest: "Quest" };
+
 /**
- * A route or geofence box, folded to its label and point count (they run to
- * hundreds of lines); unfolded when empty, so it is easy to fill in.
+ * A route or geofence: its name and point count, and a button that opens the
+ * box to enter or paste its points (they run to hundreds of lines). A mode's
+ * route also gets the Kōji buttons when the area's Dragonite has Kōji.
  */
 function Coords({
   label,
@@ -492,6 +547,10 @@ function Coords({
   error,
   hint,
   placeholder,
+  emptyText = "Empty",
+  basemap,
+  koji,
+  kojiMode,
 }: {
   label: string;
   value: string;
@@ -500,20 +559,240 @@ function Coords({
   error?: string;
   hint?: string;
   placeholder?: string;
+  /** What an empty one means (an override: the area's geofence). */
+  emptyText?: string;
+  basemap?: AppInfo["map"];
+  koji?: Koji;
+  kojiMode?: KojiMode;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [asking, setAsking] = useState<{ bootstrap: boolean; label: string }>();
+  const Icon = kind === "geofence" ? Hexagon : Route;
+  const empty = !value.trim();
   return (
-    <details open={!value.trim() || (!!error && error !== "Required")} className="group rounded-lg border">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
-        <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
-        <span className="font-medium">{label}</span>
-        <Points text={value} kind={kind} />
-        {error && error !== "Required" ? <span className="ml-auto text-[11px] text-amber-400">{error}</span> : null}
-      </summary>
-      <div className="flex flex-col gap-1.5 px-3 pb-3">
-        <textarea className={cn(area, "min-h-32")} value={value} onChange={(e) => onChange(e.target.value)} spellCheck={false} placeholder={placeholder ?? "lat,lon"} />
-        {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-h-12 items-center gap-2.5 rounded-lg border px-3 py-1.5 text-sm">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col leading-tight">
+          <span className="truncate font-medium">{label}</span>
+          {error && error !== "Required" ? (
+            <span className="truncate text-[11px] text-amber-400">{error}</span>
+          ) : (
+            <span className="truncate text-[11px] text-muted-foreground">{empty ? emptyText : <Points text={value} kind={kind} bare />}</span>
+          )}
+        </span>
+        {koji?.available && kojiMode
+          ? KOJI_OPTIONS[kojiMode].map((o) => (
+              <HoverCard
+                key={o.label}
+                className="inline-flex"
+                content={
+                  <span className="flex flex-col gap-0.5">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <o.icon className="size-3.5 text-violet-400" />
+                      {o.label}
+                    </span>
+                    <span className="text-muted-foreground">From Kōji · saved at once</span>
+                  </span>
+                }
+              >
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="size-8 text-muted-foreground transition-colors hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-300 focus-visible:text-violet-300"
+                  aria-label={`${o.label} from Kōji`}
+                  onClick={() => setAsking(o)}
+                >
+                  <o.icon />
+                </Button>
+              </HoverCard>
+            ))
+          : null}
+        <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+          {empty ? <Plus /> : <Pencil />}
+          {empty ? "Add" : "Edit"}
+        </Button>
       </div>
-    </details>
+      {asking && koji && kojiMode ? (
+        <KojiModal mode={kojiMode} option={asking} points={empty ? 0 : parseLines(value).length} run={() => koji.run(kojiMode, asking.bootstrap)} onClose={() => setAsking(undefined)} />
+      ) : null}
+      {editing ? (
+        <CoordsModal
+          label={label}
+          kind={kind}
+          value={value}
+          hint={hint}
+          placeholder={placeholder}
+          emptyText={emptyText}
+          basemap={basemap}
+          onApply={(v) => {
+            onChange(v);
+            setEditing(false);
+          }}
+          onClose={() => setEditing(false)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The admin's Kōji confirmation: Dragonite asks Kōji for the route and stores
+ * it straight away, replacing the saved one (Save is not needed).
+ */
+function KojiModal({ mode, option, points, run, onClose }: { mode: KojiMode; option: { bootstrap: boolean; label: string }; points: number; run: () => Promise<number>; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const go = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const n = await run();
+      toast({ tone: "success", text: `Kōji: ${MODE_NAME[mode]} route saved with ${fmt.int(n)} points` });
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={busy ? () => {} : onClose}
+      icon={<WandSparkles />}
+      title={option.label}
+      description="From Kōji, through Dragonite"
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={go} disabled={busy}>
+            {busy ? <Spinner className="size-4" /> : <WandSparkles />}
+            {busy ? "Asking Kōji…" : "Get route"}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <p>
+          Dragonite asks Kōji for the {option.bootstrap ? "bootstrap " : ""}route and <b>saves it right away</b>, replacing the stored {MODE_NAME[mode]} route
+          {points ? ` (${fmt.int(points)} points)` : ""}.
+        </p>
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          Kōji works from the saved geofence: save geofence changes first. Other unsaved changes stay in the form.
+        </p>
+        {error ? <p className="text-red-300">{error}</p> : null}
+      </div>
+    </Modal>
+  );
+}
+
+/** The box for one route or geofence: paste or type its points, checked and drawn as they are read. */
+function CoordsModal({
+  label,
+  kind,
+  value,
+  hint,
+  placeholder,
+  emptyText,
+  basemap,
+  onApply,
+  onClose,
+}: {
+  label: string;
+  kind: "route" | "geofence";
+  value: string;
+  hint?: string;
+  placeholder?: string;
+  emptyText: string;
+  basemap?: AppInfo["map"];
+  onApply: (v: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(value);
+  // The map follows the text a beat behind, so typing stays smooth.
+  const shown = useDeferredValue(text);
+  let n = 0;
+  let problem: string | undefined;
+  try {
+    n = kind === "geofence" ? geofencePoints(parseGeofence(text)) : parseLines(text).length;
+  } catch (e) {
+    problem = (e as Error).message;
+  }
+  const layers = useMemo<MapLayer[]>(() => {
+    try {
+      if (kind === "geofence") return [{ key: "edit", name: label, color: "#3b82f6", polygons: polygonsOf(parseGeofence(shown)) }];
+      return [{ key: "edit", name: label, color: "#22c55e", points: parseLines(shown).map((p) => [p.lon, p.lat] as [number, number]) }];
+    } catch {
+      return [];
+    }
+  }, [shown, kind, label]);
+  const Icon = kind === "geofence" ? Hexagon : Route;
+  const lines = text ? text.split("\n").length : 0;
+  return (
+    <Modal
+      open
+      large
+      tall
+      onClose={onClose}
+      icon={<Icon />}
+      title={label}
+      description={
+        <>
+          {kind === "geofence" ? FENCE_HINT : "One “lat,lon” per line, in the order the workers walk them."}
+          {hint && hint !== FENCE_HINT ? ` ${hint}.` : ""}
+        </>
+      }
+      footer={
+        <>
+          <Button type="button" variant="ghost" className="mr-auto" onClick={() => setText("")} disabled={!text}>
+            <Trash2 />
+            Clear
+          </Button>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => onApply(text)} disabled={!!problem || text === value}>
+            <Check />
+            Apply
+          </Button>
+        </>
+      }
+    >
+      {/* The editor and, beside it (above it on phones), the points it reads on a map. */}
+      <div className="grid h-full min-h-0 grid-rows-[10rem_minmax(16rem,1fr)] gap-3 sm:grid-cols-2 sm:grid-rows-1 sm:gap-4">
+        <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-muted/20 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50">
+          <textarea
+            className="min-h-0 flex-1 resize-none bg-transparent px-3 py-2.5 font-mono text-xs leading-relaxed outline-none placeholder:text-muted-foreground"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            spellCheck={false}
+            autoFocus
+            placeholder={placeholder ?? "lat,lon"}
+          />
+          <div className="flex items-center gap-2 border-t bg-card/60 px-3 py-2 text-xs">
+            {problem ? (
+              <TriangleAlert className="size-3.5 shrink-0 text-amber-400" />
+            ) : text.trim() ? (
+              <CircleCheck className="size-3.5 shrink-0 text-green-400" />
+            ) : (
+              <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className={cn("min-w-0 flex-1 truncate tabular-nums", problem ? "text-amber-400" : "text-muted-foreground")}>
+              {problem ?? (text.trim() ? `${fmt.int(n)} points` : emptyText)}
+            </span>
+            {lines ? <span className="shrink-0 text-muted-foreground tabular-nums">{fmt.int(lines)} lines</span> : null}
+          </div>
+        </div>
+        <div className="order-first min-h-0 sm:order-last">
+          <Suspense fallback={<div className="grid h-full place-items-center rounded-lg border"><Spinner /></div>}>
+            <AreaMapLazy layers={layers} basemap={basemap} className="h-full min-h-0" />
+          </Suspense>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -533,43 +812,60 @@ export function AreaFields({
   basemap,
   nameNote,
   general,
+  enabled,
+  koji,
 }: {
   d: Draft;
   set: <K extends keyof Draft>(k: K, v: Partial<Draft[K]> | Draft[K]) => void;
   errs: Record<string, string>;
   tab: FormTab;
   create?: boolean;
+  /** Kōji buttons on the routes (editing only). */
+  koji?: Koji;
   basemap?: AppInfo["map"];
   /** Under the name (e.g. "already used"). */
   nameNote?: ReactNode;
   /** Extra fields at the top of the General tab. */
   general?: ReactNode;
+  /** The area's own switch, in the General tab's header (when editing). */
+  enabled?: { on: boolean; onChange: (v: boolean) => void };
 }) {
   const kojiNote = create ? <p className="text-[11px] text-muted-foreground italic">Kōji routing is only available after creating the area.</p> : null;
 
   const fields =
     tab === "general" ? (
       <>
-        <TabHead title="General" text="The area's name and the geofence every mode scans, unless a mode overrides it." />
+        <TabHead title="General" text="The area's name and the geofence every mode scans, unless a mode overrides it." on={enabled?.on} onChange={enabled?.onChange} />
         {general}
-        <Field label="Name" error={errs.name}>
-          <Input value={d.name} onChange={(e) => set("name", e.target.value)} maxLength={128} autoFocus={create} />
-        </Field>
-        {nameNote}
-        <Coords label="Geofence" kind="geofence" value={d.geofence} onChange={(v) => set("geofence", v)} error={errs.geofence} hint={FENCE_HINT} placeholder="lat,lon — or GeoJSON" />
+        <div className={COLS}>
+          <div className="flex min-w-0 flex-col gap-2 sm:col-span-2">
+            <Field label="Name" error={errs.name}>
+              <Input value={d.name} onChange={(e) => set("name", e.target.value)} maxLength={128} autoFocus={create} className="sm:h-12" />
+            </Field>
+            {nameNote}
+          </div>
+          {/* Level with the name's box, below its label. */}
+          <div className="min-w-0 sm:pt-[1.375rem]">
+            <Coords basemap={basemap} label="Geofence" kind="geofence" value={d.geofence} onChange={(v) => set("geofence", v)} error={errs.geofence} hint={FENCE_HINT} placeholder="lat,lon — or GeoJSON" />
+          </div>
+        </div>
       </>
     ) : tab === "pokemon" ? (
       <>
         <TabHead title="Pokémon" text="Walks its route finding and encountering Pokémon." on={d.pokemon.enabled} onChange={(v) => set("pokemon", { enabled: v })} />
-        <Field label="Workers" error={errs["pokemon.workers"]}>
-          <Input type="number" min={0} value={d.pokemon.workers} onChange={(e) => set("pokemon", { workers: e.target.value })} />
-        </Field>
-        <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5">
-          <Tick label="Enable for Scout Mode" on={d.pokemon.scout} onChange={(v) => set("pokemon", { scout: v })} />
-          <Tick label="Populate Invasions" on={d.pokemon.invasion} onChange={(v) => set("pokemon", { invasion: v })} />
+        <div className={COLS}>
+          <Field label="Workers" error={errs["pokemon.workers"]}>
+            <Input type="number" min={0} value={d.pokemon.workers} onChange={(e) => set("pokemon", { workers: e.target.value })} />
+          </Field>
+          <Options>
+            <Tick label="Enable for Scout Mode" on={d.pokemon.scout} onChange={(v) => set("pokemon", { scout: v })} />
+            <Tick label="Populate Invasions" on={d.pokemon.invasion} onChange={(v) => set("pokemon", { invasion: v })} />
+          </Options>
         </div>
-        <Coords label="Route" value={d.pokemon.route} onChange={(v) => set("pokemon", { route: v })} />
-        <Coords label="Geofence override" kind="geofence" value={d.pokemon.geofence} onChange={(v) => set("pokemon", { geofence: v })} error={errs["pokemon.geofence"]} hint="Leave empty to use the area's base geofence" placeholder="Empty: the area's geofence" />
+        <div className={COLS}>
+          <Coords basemap={basemap} koji={koji} kojiMode="pokemon" label="Route" value={d.pokemon.route} onChange={(v) => set("pokemon", { route: v })} />
+          <Coords basemap={basemap} label="Geofence override" kind="geofence" value={d.pokemon.geofence} onChange={(v) => set("pokemon", { geofence: v })} error={errs["pokemon.geofence"]} hint="Leave it empty to use the area's geofence" placeholder="Empty: the area's geofence" emptyText="The area's geofence" />
+        </div>
         {kojiNote}
       </>
     ) : tab === "quest" ? (
@@ -580,32 +876,38 @@ export function AreaFields({
             Pokémon and Fort modes are both off: no worker can switch to quests until one of them is on.
           </p>
         ) : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Workers" error={errs["quest.workers"]} hint="0 uses all Pokémon workers">
+        <div className={COLS}>
+          <Field label="Workers" error={errs["quest.workers"]} hint="0 = all">
             <Input type="number" min={0} value={d.quest.workers} onChange={(e) => set("quest", { workers: e.target.value })} />
           </Field>
           <Field label="Quest hours" hint="e.g. [1,10]">
             <Input value={d.quest.hours} onChange={(e) => set("quest", { hours: e.target.value })} spellCheck={false} className="font-mono" />
           </Field>
         </div>
-        <Coords label="Route" value={d.quest.route} onChange={(v) => set("quest", { route: v })} />
-        <Coords label="Geofence override" kind="geofence" value={d.quest.geofence} onChange={(v) => set("quest", { geofence: v })} error={errs["quest.geofence"]} hint="Leave empty to use the area's base geofence" placeholder="Empty: the area's geofence" />
+        <div className={COLS}>
+          <Coords basemap={basemap} koji={koji} kojiMode="quest" label="Route" value={d.quest.route} onChange={(v) => set("quest", { route: v })} />
+          <Coords basemap={basemap} label="Geofence override" kind="geofence" value={d.quest.geofence} onChange={(v) => set("quest", { geofence: v })} error={errs["quest.geofence"]} hint="Leave it empty to use the area's geofence" placeholder="Empty: the area's geofence" emptyText="The area's geofence" />
+        </div>
         {kojiNote}
       </>
     ) : tab === "fort" ? (
       <>
         <TabHead title="Fort" text="Visits gyms and Pokéstops: raids, invasions and showcases." on={d.fort.enabled} onChange={(v) => set("fort", { enabled: v })} />
-        <Field label="Workers" error={errs["fort.workers"]}>
-          <Input type="number" min={0} value={d.fort.workers} onChange={(e) => set("fort", { workers: e.target.value })} />
-        </Field>
-        <div className="flex flex-col gap-2 rounded-lg border px-3 py-2.5">
-          <Tick label="Priority Raids" on={d.fort.prioRaid} onChange={(v) => set("fort", { prioRaid: v })} />
-          <Tick label="Scan Showcases" on={d.fort.showcase} onChange={(v) => set("fort", { showcase: v })} />
-          <Tick label="Populate Invasions" on={d.fort.invasion} onChange={(v) => set("fort", { invasion: v })} />
+        <div className={COLS}>
+          <Field label="Workers" error={errs["fort.workers"]}>
+            <Input type="number" min={0} value={d.fort.workers} onChange={(e) => set("fort", { workers: e.target.value })} />
+          </Field>
+          <Options>
+            <Tick label="Priority Raids" on={d.fort.prioRaid} onChange={(v) => set("fort", { prioRaid: v })} />
+            <Tick label="Scan Showcases" on={d.fort.showcase} onChange={(v) => set("fort", { showcase: v })} />
+            <Tick label="Populate Invasions" on={d.fort.invasion} onChange={(v) => set("fort", { invasion: v })} />
+          </Options>
         </div>
-        <Coords label="Route" value={d.fort.route} onChange={(v) => set("fort", { route: v })} />
-        <Coords label="Full route" value={d.fort.fullRoute} onChange={(v) => set("fort", { fullRoute: v })} hint="Used for Optimize" />
-        <Coords label="Geofence override" kind="geofence" value={d.fort.geofence} onChange={(v) => set("fort", { geofence: v })} error={errs["fort.geofence"]} hint="Leave empty to use the area's base geofence" placeholder="Empty: the area's geofence" />
+        <div className={COLS}>
+          <Coords basemap={basemap} koji={koji} kojiMode="fort" label="Route" value={d.fort.route} onChange={(v) => set("fort", { route: v })} />
+          <Coords basemap={basemap} label="Full route" value={d.fort.fullRoute} onChange={(v) => set("fort", { fullRoute: v })} hint="Used for Optimize" />
+          <Coords basemap={basemap} label="Geofence override" kind="geofence" value={d.fort.geofence} onChange={(v) => set("fort", { geofence: v })} error={errs["fort.geofence"]} hint="Leave it empty to use the area's geofence" placeholder="Empty: the area's geofence" emptyText="The area's geofence" />
+        </div>
         {kojiNote}
       </>
     ) : (
@@ -614,17 +916,17 @@ export function AreaFields({
         {d.rare.enabled && !d.fort.enabled ? (
           <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">It only runs while the Fort mode is on.</p>
         ) : null}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Workers" error={errs["rare.workers"]} hint="Only available when fort mode is enabled">
+        <div className={COLS}>
+          <Field label="Workers" error={errs["rare.workers"]} hint="needs Fort">
             <Input type="number" min={0} value={d.rare.workers} onChange={(e) => set("rare", { workers: e.target.value })} />
           </Field>
-          <Field label="Permyriad" error={errs["rare.permyriad"]} hint="Rarity threshold per 10,000">
+          <Field label="Permyriad" error={errs["rare.permyriad"]} hint="per 10,000">
             <Input type="number" min={0} max={10000} value={d.rare.permyriad} onChange={(e) => set("rare", { permyriad: e.target.value })} />
           </Field>
+          <Field label="Extra Pokémon IDs" hint="always hunted">
+            <Input value={d.rare.extra} onChange={(e) => set("rare", { extra: e.target.value })} spellCheck={false} placeholder="e.g. 147, 371" />
+          </Field>
         </div>
-        <Field label="Extra Pokémon IDs" hint="Comma-separated, always hunted">
-          <Input value={d.rare.extra} onChange={(e) => set("rare", { extra: e.target.value })} spellCheck={false} placeholder="e.g. 147, 371" />
-        </Field>
       </>
     );
 
@@ -645,22 +947,30 @@ export function AreaForm({
   basemap,
   nameNote,
   general,
+  enabled,
+  koji,
 }: {
   d: Draft;
   set: <K extends keyof Draft>(k: K, v: Partial<Draft[K]> | Draft[K]) => void;
   errs: Record<string, string>;
   tab: FormTab;
   setTab: (t: FormTab) => void;
+  koji?: Koji;
   create?: boolean;
   basemap?: AppInfo["map"];
   nameNote?: ReactNode;
   general?: ReactNode;
+  enabled?: { on: boolean; onChange: (v: boolean) => void };
 }) {
   return (
-    <div className="flex flex-col gap-4">
-      <AreaMapView area={draftLayers(d)} basemap={basemap} className="h-64 sm:h-80" />
+    // The map takes the height the tab's fields leave, so the modal keeps its size between tabs.
+    <div className="flex flex-1 flex-col gap-4">
+      <AreaMapView area={draftLayers(d)} basemap={basemap} className="h-64 shrink-0 sm:h-auto sm:min-h-32 sm:flex-1" />
       <FormTabs tab={tab} setTab={setTab} errs={errs} d={d} />
-      <AreaFields d={d} set={set} errs={errs} tab={tab} create={create} basemap={basemap} nameNote={nameNote} general={general} />
+      {/* The same height on every tab, so the map and the tabs above never move. */}
+      <div className="shrink-0 sm:h-52 sm:overflow-y-auto">
+        <AreaFields d={d} set={set} errs={errs} tab={tab} create={create} basemap={basemap} nameNote={nameNote} general={general} enabled={enabled} koji={koji} />
+      </div>
     </div>
   );
 }

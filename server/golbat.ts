@@ -1,8 +1,8 @@
 // Golbat charts, ported from its Grafana dashboard ("Golbat" export) and run
-// against the same VictoriaMetrics the RotomNG charts use. Panels are defined
+// against the same Zapdos the RotomNG charts use. Panels are defined
 // here, not sent by the browser, so the page can only run these queries.
 
-import type { VictoriaMetricsConfig } from "./config.ts";
+import type { ZapdosConfig } from "./config.ts";
 import { type PanelDef, type PanelData, runPanel, vmLabelValues, vmPost } from "./vmpanels.ts";
 
 export interface GolbatConfig {
@@ -193,7 +193,7 @@ export const GOLBAT_SERIES = new Set([
 export const GOLBAT_INTERVALS = ["1m", "10m", "30m", "1h", "6h", "12h", "1d"] as const;
 
 export function golbatPanel(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   golbat: GolbatConfig,
   panel: PanelDef,
   opts: { rangeMs: number; stepMs: number; inter: string; areas: string[] },
@@ -202,7 +202,7 @@ export function golbatPanel(
   return runPanel(vm, panel, { ...opts, base: golbat.selector, scanMetric: "golbat_pokemon_count_new" }, timeoutMs);
 }
 
-export async function golbatAreas(vm: VictoriaMetricsConfig, golbat: GolbatConfig, timeoutMs: number) {
+export async function golbatAreas(vm: ZapdosConfig, golbat: GolbatConfig, timeoutMs: number) {
   const match = `golbat_pokemon_count_new{${golbat.selector}}`;
   const areas = await vmLabelValues(vm, "area", match, timeoutMs);
   return areas.filter((a) => a && a !== "unmatched").sort((a, b) => a.localeCompare(b, "en"));
@@ -228,7 +228,7 @@ export interface GolbatSummary {
 }
 
 export async function golbatSummary(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   golbat: GolbatConfig,
   timeoutMs: number,
 ): Promise<GolbatSummary> {

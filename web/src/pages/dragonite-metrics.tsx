@@ -9,7 +9,7 @@ import { PanelChart } from "@/components/vm-panel";
 import { endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { fmt } from "@/lib/utils";
-import { type FolderTab, FolderPanel, FolderTabs, tabEdge } from "@/components/folder-tabs";
+import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { REJECTED_NOISE_PER_HOUR } from "@/components/charts";
 
@@ -91,7 +91,7 @@ export function DragoniteMetricsPage() {
   };
   const [areas, setAreas] = useState<string[]>([]);
   const instances = instance && dragonites.some((d) => d.id === instance) ? [instance] : [];
-  // How far back the charts shown go: 30 days from VictoriaMetrics, only
+  // How far back the charts shown go: 30 days from Zapdos, only
   // history_retention (24h by default) when they come from memory.
   const one = dragonites.find((d) => d.id === instances[0]);
   const maxRange = (one ? one.historyMs : app?.dragoniteHistory?.maxRangeMs) || Infinity;
@@ -127,7 +127,7 @@ export function DragoniteMetricsPage() {
   const rows = summary.data?.instances ?? [];
   const picked = current ? rows.filter((r) => r.id === current) : rows;
   const tabs: FolderTab[] = [
-    { id: "", label: "All", summary: rows.length ? `${fmt.int(rows.reduce((n, r) => n + r.locations, 0))} loc./h` : undefined },
+    { id: "", label: "All", compact: true },
     ...dragonites.map((d) => {
       const r = rows.find((x) => x.id === d.id);
       return {
@@ -149,7 +149,7 @@ export function DragoniteMetricsPage() {
         {/* Same folder tabs as Areas, with "All" first; the panel shows that tab's last hour. */}
         <div className="flex flex-col">
           {dragonites.length > 1 ? <FolderTabs label="Stack" tabs={tabs} value={current} onChange={setInstance} /> : null}
-          <FolderPanel color={tabColor} edge={dragonites.length > 1 ? tabEdge(tabs, current) : undefined}>
+          <FolderPanel color={tabColor} tabbed={dragonites.length > 1}>
             <StackFigures rows={picked} />
           </FolderPanel>
         </div>

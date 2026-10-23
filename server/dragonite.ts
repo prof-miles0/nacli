@@ -1,8 +1,8 @@
 // Dragonite charts, ported from its Grafana dashboard ("Dragonite" export) and
-// run against the same VictoriaMetrics. Each [stack.dragonite] in config.toml is
+// run against the same Zapdos. Each [stack.dragonite] in config.toml is
 // one scrape target (its `instance` label) and may name the RotomNG it feeds.
 
-import type { DragoniteConfig, VictoriaMetricsConfig } from "./config.ts";
+import type { DragoniteConfig, ZapdosConfig } from "./config.ts";
 import { anyOf, type PanelDef, vmLabelValues, vmPost, vmScalars } from "./vmpanels.ts";
 
 /** Share of each label value in the interval, as a percentage of the total. */
@@ -190,11 +190,11 @@ export const DRAGONITE_ROWS = ["Scanning", "Accounts", "Invasions", "Queues and 
 /** Base selector for the chosen Dragonites (all configured ones when none is chosen). */
 export function dragoniteBase(all: DragoniteConfig[], ids: string[]): string {
   const chosen = ids.length ? all.filter((d) => ids.includes(d.id)) : all;
-  return anyOf("instance", chosen.map((d) => d.vmInstance));
+  return anyOf("instance", chosen.map((d) => d.zapdosInstance));
 }
 
 /** Areas seen in the series of the given Dragonites (all of them when `ids` is empty). */
-export async function dragoniteAreas(vm: VictoriaMetricsConfig, all: DragoniteConfig[], timeoutMs: number, ids: string[] = []) {
+export async function dragoniteAreas(vm: ZapdosConfig, all: DragoniteConfig[], timeoutMs: number, ids: string[] = []) {
   const areas = await vmLabelValues(vm, "area", `dragonite_location_handled_counter{${dragoniteBase(all, ids)}}`, timeoutMs);
   return areas.filter((a) => a && a !== "scout").sort((a, b) => a.localeCompare(b, "en"));
 }
@@ -218,7 +218,7 @@ export interface DragoniteStats {
 
 /** One instant query per figure, each `by (instance)` across all Dragonites. */
 export async function dragoniteStats(
-  vm: VictoriaMetricsConfig,
+  vm: ZapdosConfig,
   all: DragoniteConfig[],
   timeoutMs: number,
 ): Promise<DragoniteStats[]> {
@@ -245,10 +245,10 @@ export async function dragoniteStats(
   ]);
   const keys = Object.keys(queries) as (keyof typeof queries)[];
   return all.map((d) => {
-    const get = (k: keyof typeof queries) => values[keys.indexOf(k)].get(d.vmInstance);
+    const get = (k: keyof typeof queries) => values[keys.indexOf(k)].get(d.zapdosInstance);
     return {
       id: d.id,
-      version: versions.get(d.vmInstance),
+      version: versions.get(d.zapdosInstance),
       lastSeenS: get("lastSeenS"),
       locations: get("locations") ?? 0,
       locationSeconds: get("locationSeconds"),
@@ -263,7 +263,7 @@ export async function dragoniteStats(
 }
 
 /** Version per instance, read from the `version` label of dragonite_build_info. */
-async function versionsOf(vm: VictoriaMetricsConfig, sel: string, timeoutMs: number) {
+async function versionsOf(vm: ZapdosConfig, sel: string, timeoutMs: number) {
   const json = await vmPost(vm, "/api/v1/query", { query: `dragonite_build_info{${sel}}` }, timeoutMs);
   return new Map((json.data?.result ?? []).map((r) => [r.metric.instance ?? "", r.metric.version ?? ""] as const));
 }
@@ -278,7 +278,10 @@ export function controllerSource(userAgent: string | undefined): string | undefi
 }
 
 /** Does a controller's source name (from its user agent) refer to this Dragonite? */
-export function sourceMatches(source: string, d: DragoniteConfig): boolean {
+export function sourceMatches(source: string, d: DragoniteConfig, instance?: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/^dragonite\s*-\s*/, "").trim();
+  // The name Dragonite reports itself (its config's `instance`), when its API is
+  // configured; otherwise the stack's own name.
+  if (instance) return norm(source) === norm(instance);
   return norm(source) === norm(d.name) || norm(source) === d.id;
 }

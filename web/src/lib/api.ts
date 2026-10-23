@@ -1,4 +1,5 @@
 import type {
+  AreaStatsHistory,
   AreaStatsResponse,
   AccountImportResult,
   AccountOwner,
@@ -100,6 +101,9 @@ export const endpoints = {
   golbatSummary: () => api<GolbatSummary>("/golbat/summary"),
   golbatDevices: () => api<MapDevice[]>("/golbat/devices"),
   golbatAreaStats: () => api<AreaStatsResponse>("/golbat/area-stats"),
+  /** The last 24 h of the totals, or of one area ("stack:areaId"). */
+  golbatAreaStatsHistory: (area?: string) =>
+    api<AreaStatsHistory>(`/golbat/area-stats/history${area ? `?area=${encodeURIComponent(area)}` : ""}`),
   golbatTrail: (instance: string, controller: string) =>
     api<MapTrailPoint[]>(`/golbat/trail?${new URLSearchParams({ instance, controller })}`),
   dragoniteMeta: () => api<DragoniteMeta>("/dragonite/meta"),
@@ -141,6 +145,12 @@ export const endpoints = {
   areaFull: (id: string, area: number) => api<Record<string, unknown>>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`),
   areaSpawnpoints: (id: string, area: number) =>
     api<{ points: { lat: number; lon: number; verified: boolean }[]; partial: boolean }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/spawnpoints`),
+  kojiAvailable: (id: string) => api<{ available: boolean }>(`/dragonite/${encodeURIComponent(id)}/koji`),
+  kojiRoute: (id: string, area: number, mode: "pokemon" | "fort" | "quest", bootstrap: boolean) =>
+    api<{ route: { lat: number; lon: number }[] }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/koji/${mode}`, {
+      method: "POST",
+      body: JSON.stringify({ bootstrap }),
+    }),
   saveAreaFull: (id: string, area: number, body: Record<string, unknown>) =>
     api<{ ok: true; steps: string[] }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`, { method: "PUT", body: JSON.stringify(body) }),
   transferArea: (id: string, area: number, body: { to: string; name: string; mode: "copy" | "move"; enable: boolean }) =>

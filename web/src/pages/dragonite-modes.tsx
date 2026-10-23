@@ -2,9 +2,10 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, Eraser, Pencil, Plus, Swords, Telescope, Trash2, TrendingUp } from "lucide-react";
 import { Fragment, lazy, Suspense, useMemo, useState } from "react";
 import type { DragoniteArea, DragoniteInfo, LevelStat, UnboundMode, UnboundModeType, UnboundModes } from "@shared/types";
-import { type FolderTab, FolderPanel, FolderTabs, tabEdge } from "@/components/folder-tabs";
+import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { MenuButton } from "@/components/menu-button";
+import { useStacks } from "@/components/stack-tag";
 import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
 import { PanelChart } from "@/components/vm-panel";
 import { toast } from "@/components/toaster";
@@ -92,12 +93,11 @@ export function DragoniteModesPage() {
   }
   const tabs: FolderTab[] = stacks.map((d, i) => {
     const data = queries[i].data;
-    const active = data?.modes.reduce((n, m) => n + (m.live?.active ?? 0), 0);
     return {
       id: d.id,
       label: d.name,
       color: d.rotom ? color(d.rotom) : undefined,
-      summary: data ? `${data.modes.length} mode${data.modes.length === 1 ? "" : "s"} · ${active} worker${active === 1 ? "" : "s"}` : undefined,
+      summary: data ? `${data.modes.length} mode${data.modes.length === 1 ? "" : "s"}` : undefined,
     };
   });
   const q = queries[stacks.indexOf(current)];
@@ -110,7 +110,7 @@ export function DragoniteModesPage() {
       data={q.data}
       error={q.error as Error | null}
       tabs={stacks.length > 1 ? <FolderTabs label="Stack" tabs={tabs} value={current.id} onChange={choose} /> : null}
-      edge={stacks.length > 1 ? tabEdge(tabs, current.id) : undefined}
+      tabbed={stacks.length > 1}
     />
   );
 }
@@ -124,15 +124,16 @@ function StackModes({
   data,
   error,
   tabs,
-  edge,
+  tabbed,
 }: {
   stack: DragoniteInfo;
   stacks: DragoniteInfo[];
   data?: UnboundModes;
   error: Error | null;
   tabs: React.ReactNode;
-  edge?: "left" | "right";
+  tabbed?: boolean;
 }) {
+  const { on } = useStacks();
   const color = useInstanceColor();
   const qc = useQueryClient();
   const stackColor = stack.rotom ? color(stack.rotom) : "var(--muted-foreground)";
@@ -217,7 +218,7 @@ function StackModes({
     <div className="animate-in flex flex-col gap-3">
       <div className="flex flex-col">
         {tabs}
-        <FolderPanel color={stackColor} edge={edge}>
+        <FolderPanel color={stackColor} tabbed={tabbed}>
           {!data ? (
             error ? <p className="text-sm text-red-300">{error.message}</p> : <Spinner />
           ) : (
@@ -258,7 +259,7 @@ function StackModes({
           <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card sm:hidden">
             {sorted.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-                {data.modes.length ? "No modes match." : `${stack.name} has no unbound modes yet.`}
+                {data.modes.length ? "No modes match." : `No unbound modes${on(stack.id)} yet.`}
               </p>
             ) : null}
             {sorted.map((m) => {
@@ -307,7 +308,7 @@ function StackModes({
                 {sorted.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                      {data.modes.length ? "No modes match." : `${stack.name} has no unbound modes yet.`}
+                      {data.modes.length ? "No modes match." : `No unbound modes${on(stack.id)} yet.`}
                     </td>
                   </tr>
                 ) : null}
@@ -388,11 +389,11 @@ function StackModes({
           onConfirm={async () => {
             const m = deleting;
             await endpoints.deleteMode(stack.id, m.type, m.id);
-            toast({ text: `${TYPES[m.type].label} mode “${m.name}” deleted from ${stack.name}` });
+            toast({ text: `${TYPES[m.type].label} mode “${m.name}” deleted${on(stack.id, "from")}` });
             refresh();
           }}
         >
-          The {TYPES[deleting.type].label.toLowerCase()} mode “{deleting.name}” will be removed from {stack.name}.
+          The {TYPES[deleting.type].label.toLowerCase()} mode “{deleting.name}” will be removed{on(stack.id, "from")}.
           {deleting.live?.active ? ` Its ${deleting.live.active} worker${deleting.live.active === 1 ? "" : "s"} will stop.` : ""}
         </Confirm>
       ) : null}
@@ -403,12 +404,12 @@ function StackModes({
           onClose={() => setClearing(false)}
           onConfirm={async () => {
             await endpoints.clearScoutQueue(stack.id);
-            toast({ text: `Scout queue of ${stack.name} cleared` });
+            toast({ text: `Scout queue${on(stack.id, "of")} cleared` });
             refresh();
             qc.invalidateQueries({ queryKey: ["dragonite-scout", stack.id] });
           }}
         >
-          Every point in {stack.name}'s scout queue ({fmt.int(sq?.total ?? 0)}) will be dropped, done or not.
+          Every point in the scout queue{on(stack.id, "of")} ({fmt.int(sq?.total ?? 0)}) will be dropped, done or not.
         </Confirm>
       ) : null}
     </div>
@@ -520,6 +521,7 @@ function ModeModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { on } = useStacks();
   const [type, setType] = useState<UnboundModeType>(mode?.type ?? "invasion");
   const [name, setName] = useState(mode?.name ?? "");
   const [workers, setWorkers] = useState(String(mode?.workers ?? 1));
@@ -548,7 +550,7 @@ function ModeModal({
     try {
       if (!mode) {
         await endpoints.createMode(stack.id, type, { name: name.trim(), workers: n, ...(type === "level" ? { route: parsed.points } : {}) });
-        toast({ text: `${TYPES[type].label} mode “${name.trim()}” created on ${stack.name}` });
+        toast({ text: `${TYPES[type].label} mode “${name.trim()}” created${on(stack.id)}` });
       } else {
         const patch: { name?: string; workers?: number; route?: { lat: number; lon: number }[] } = {};
         if (name.trim() !== mode.name) patch.name = name.trim();
@@ -556,7 +558,7 @@ function ModeModal({
         if (routeChanged) patch.route = parsed.points;
         if (Object.keys(patch).length) {
           await endpoints.updateMode(stack.id, mode.type, mode.id, patch);
-          toast({ text: `“${name.trim()}” saved on ${stack.name}` });
+          toast({ text: `“${name.trim()}” saved${on(stack.id)}` });
         }
       }
       onDone();
@@ -573,7 +575,7 @@ function ModeModal({
       open
       wide={type === "level"}
       onClose={onClose}
-      title={mode ? `Edit ${mode.name}` : `New mode on ${stack.name}`}
+      title={mode ? `Edit ${mode.name}` : `New mode${on(stack.id)}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -628,7 +630,7 @@ function ModeModal({
           <label className="flex flex-col gap-1.5">
             <Label>Name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={64} placeholder={type === "invasion" ? "e.g. Rocket" : ""} autoFocus />
-            {clash ? <span className="text-[11px] text-amber-400">{stack.name} already has {type === "invasion" ? "an" : "a"} {TYPES[type].label.toLowerCase()} mode with this name.</span> : null}
+            {clash ? <span className="text-[11px] text-amber-400">There is already {type === "invasion" ? "an" : "a"} {TYPES[type].label.toLowerCase()} mode with this name{on(stack.id)}.</span> : null}
           </label>
           <label className="flex flex-col gap-1.5">
             <Label>Workers</Label>
@@ -750,6 +752,7 @@ const PER_PAGE = 10;
 
 /** The scout queue as the admin's Scout Mode page shows it: summary, map and list. */
 function ScoutSection({ stack, areas, onClear }: { stack: DragoniteInfo; areas: DragoniteArea[]; onClear: () => void }) {
+  const { on } = useStacks();
   const { data: app } = useAppInfo();
   const [page, setPage] = useState(0);
   const q = useQuery({ queryKey: ["dragonite-scout", stack.id], queryFn: () => endpoints.scoutJobs(stack.id), refetchInterval: 10_000 });
@@ -789,7 +792,7 @@ function ScoutSection({ stack, areas, onClear }: { stack: DragoniteInfo; areas: 
       ) : null}
       {q.error ? <p className="text-sm text-red-300">{(q.error as Error).message}</p> : null}
       {q.data && !jobs.length ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">The scout queue of {stack.name} is empty.</Card>
+        <Card className="p-6 text-center text-sm text-muted-foreground">The scout queue{on(stack.id, "of")} is empty.</Card>
       ) : q.data ? (
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
           <Suspense fallback={<div className="min-h-72 rounded-lg border" />}>
@@ -971,7 +974,7 @@ function TypeHeading({ type, children }: { type: UnboundModeType; children?: Rea
  * counts invasions per instance, not per mode, so it covers all of the stack.
  */
 function InvasionSection({ stack }: { stack: DragoniteInfo }) {
-  // This stack's charts: 30 days from VictoriaMetrics, history_retention from memory.
+  // This stack's charts: 30 days from Zapdos, history_retention from memory.
   const maxRange = stack.historyMs || Infinity;
   const ranges = RANGES.filter((r) => Number(r.value) <= maxRange);
   const [chosen, setRange] = useState(RANGES[2].value);
@@ -1070,6 +1073,7 @@ function LevelStats({ r }: { r: LevelStat }) {
  * a row opens its counters per minute.
  */
 function LevelSection({ stack }: { stack: DragoniteInfo }) {
+  const { on } = useStacks();
   const q = useQuery({ queryKey: ["dragonite-level", stack.id], queryFn: () => endpoints.levelStats(stack.id), refetchInterval: 10_000 });
   const [open, setOpen] = useState<Set<string>>(new Set());
   const rows = q.data ?? [];
@@ -1102,7 +1106,7 @@ function LevelSection({ stack }: { stack: DragoniteInfo }) {
       ) : !q.data ? (
         <Spinner />
       ) : !rows.length ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">No account is levelling up on {stack.name} right now.</Card>
+        <Card className="p-6 text-center text-sm text-muted-foreground">No account is levelling up {on(stack.id)} right now.</Card>
       ) : (
         <>
           <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card text-xs sm:hidden">

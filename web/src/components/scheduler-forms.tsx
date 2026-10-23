@@ -16,6 +16,7 @@ import {
   SCALE_AREA_TYPES,
   scheduleProblems,
 } from "@/lib/scheduler";
+import { StackTag, useStacks } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Button, Input, Label, Modal, Select, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -359,6 +360,7 @@ export function ScheduleModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const { on } = useStacks();
   const [d, setD] = useState<ScheduleDoc>(() => (schedule ? structuredClone({ ...NEW_SCHEDULE, ...schedule.document }) : structuredClone(NEW_SCHEDULE)));
   const [date, setDate] = useState("");
   const [tried, setTried] = useState(false);
@@ -384,7 +386,7 @@ export function ScheduleModal({
     setError(undefined);
     try {
       await endpoints.scheduler.saveSchedule(stack.id, cleanSchedule(d), schedule?.id);
-      toast({ text: `Schedule “${d.name.trim()}” ${schedule ? "saved" : "created"} on ${stack.name}` });
+      toast({ text: `Schedule “${d.name.trim()}” ${schedule ? "saved" : "created"}${on(stack.id)}` });
       onDone();
       onClose();
     } catch (e) {
@@ -399,7 +401,7 @@ export function ScheduleModal({
       open
       wide
       onClose={onClose}
-      title={schedule ? `Edit ${schedule.name}` : `New schedule on ${stack.name}`}
+      title={schedule ? `Edit ${schedule.name}` : `New schedule${on(stack.id)}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -567,6 +569,7 @@ function groupProblems(g: { name: string; areas: { area: string; attributes: str
 
 /** Create a group or edit one: areas (with the worker types they take part in) and global pools. */
 export function GroupModal({ stack, group, onClose, onDone }: { stack: DragoniteInfo; group?: GroupOut; onClose: () => void; onDone: () => void }) {
+  const { on } = useStacks();
   const [name, setName] = useState(group?.name ?? "");
   const [members, setMembers] = useState(group?.document.areas?.map((a) => ({ area: a.area, attributes: a.attributes ?? [] })) ?? []);
   const [pools, setPools] = useState(group?.document.pools?.map((p) => p.pool) ?? []);
@@ -589,7 +592,7 @@ export function GroupModal({ stack, group, onClose, onDone }: { stack: Dragonite
     };
     try {
       await endpoints.scheduler.saveGroup(stack.id, doc, group?.id);
-      toast({ text: `Group “${doc.name}” ${group ? "saved" : "created"} on ${stack.name}` });
+      toast({ text: `Group “${doc.name}” ${group ? "saved" : "created"}${on(stack.id)}` });
       onDone();
       onClose();
     } catch (e) {
@@ -604,7 +607,7 @@ export function GroupModal({ stack, group, onClose, onDone }: { stack: Dragonite
       open
       wide
       onClose={onClose}
-      title={group ? `Edit ${group.name}` : `New group on ${stack.name}`}
+      title={group ? `Edit ${group.name}` : `New group${on(stack.id)}`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -735,6 +738,7 @@ export function RunNowModal({ stack, schedule, actionIdx, onClose, onDone }: { s
 
 /** Legacy quest_mode_hours to start/check quest schedules: preview first, then migrate. */
 export function QuestMigrationModal({ stack, onClose, onDone }: { stack: DragoniteInfo; onClose: () => void; onDone: () => void }) {
+  const { on } = useStacks();
   const [minutes, setMinutes] = useState("5");
   const [preview, setPreview] = useState<QuestMigration>();
   const [busy, setBusy] = useState(false);
@@ -747,7 +751,7 @@ export function QuestMigrationModal({ stack, onClose, onDone }: { stack: Dragoni
       const r = await endpoints.scheduler.questMigration(stack.id, dry, m);
       if (dry) setPreview(r);
       else {
-        toast({ text: `Migrated ${r.migrated.length} schedule${r.migrated.length === 1 ? "" : "s"} on ${stack.name}` });
+        toast({ text: `Migrated ${r.migrated.length} schedule${r.migrated.length === 1 ? "" : "s"}${on(stack.id)}` });
         onDone();
         onClose();
       }
@@ -926,9 +930,9 @@ export function CopyScheduleModal({
                 type="button"
                 aria-pressed={d.id === to}
                 onClick={() => setTo(d.id)}
-                className={cn("rounded-lg border px-3 py-2 transition-colors hover:bg-accent", d.id === to && "border-primary bg-accent")}
+                className={cn("inline-flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors hover:bg-accent", d.id === to && "border-primary bg-accent")}
               >
-                {d.name}
+                <StackTag id={d.id} force />
               </button>
             ))}
           </div>

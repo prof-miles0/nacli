@@ -13,6 +13,7 @@ import type {
   DragoniteStatus,
   StackGeofences,
   AreaStats,
+  AreaStatsCounts,
   AreaStatsResponse,
   SystemStatus,
   ProxyEntry,
@@ -41,7 +42,7 @@ import {
   SESSION_COOKIE,
   verifySession,
 } from "./auth.ts";
-import { type AppConfig, type DragoniteConfig, loadConfig, type RotomInstanceConfig, type VictoriaMetricsConfig } from "./config.ts";
+import { type AppConfig, type DragoniteConfig, loadConfig, type RotomInstanceConfig, type ZapdosConfig } from "./config.ts";
 import { RotomRegistry, rotomFetch } from "./rotom.ts";
 import {
   controllerSource,
@@ -66,6 +67,9 @@ import {
   clearScoutQueue,
   createArea,
   questAction,
+  recalculateRoute,
+  KOJI_MODES,
+  type KojiMode,
   getArea,
   saveArea,
   createMode,
@@ -110,51 +114,51 @@ const STATIC_DIR = process.env.STATIC_DIR ?? "dist/web";
 let cfg: AppConfig = loadConfig(CONFIG_PATH);
 const registry = new RotomRegistry(cfg);
 // History in memory, read from /metrics only for the instances whose charts
-// VictoriaMetrics does not cover (no [victoriametrics], no vm_instance, or no
-// data for it there). Set again after each VictoriaMetrics check.
+// Zapdos does not cover (no [zapdos], no zapdos_instance, or no
+// data for it there). Set again after each Zapdos check.
 const localMetrics = new LocalMetrics();
 function applyMemory() {
   localMetrics.apply(cfg, {
-    rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.vmInstance ?? ""),
-    dragonite: (id) => !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.vmInstance ?? ""),
-    golbat: !onVm("golbat", cfg.golbat?.vmInstance ?? ""),
+    rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.zapdosInstance ?? ""),
+    dragonite: (id) => !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.zapdosInstance ?? ""),
+    golbat: !onVm("golbat", cfg.golbat?.zapdosInstance ?? ""),
   });
 }
-/** The in-memory history, queried as if it were VictoriaMetrics. */
-const LOCAL_VM: VictoriaMetricsConfig = { url: "memory", headers: {}, instanceLabel: "instance", selector: "", local: localMetrics };
+/** The in-memory history, queried as if it were Zapdos. */
+const LOCAL_VM: ZapdosConfig = { url: "memory", headers: {}, instanceLabel: "instance", selector: "", local: localMetrics };
 
-// ---------- Which instances VictoriaMetrics has data for ----------
+// ---------- Which instances Zapdos has data for ----------
 
 type VmKind = "rotom" | "dragonite" | "golbat";
-/** A series each kind always exposes: seen in the last hour = VictoriaMetrics has that instance. */
+/** A series each kind always exposes: seen in the last hour = Zapdos has that instance. */
 const VM_PROBE: Record<VmKind, string> = {
   rotom: "rotom_ng_workers_connected",
   dragonite: "dragonite_location_handled_counter",
   golbat: "golbat_pokemon_count_new",
 };
 const VM_CHECK_MS = 5 * 60_000;
-/** `${kind}:${vm_instance}` with recent data; undefined until the first check. */
+/** `${kind}:${zapdos_instance}` with recent data; undefined until the first check. */
 let vmReady: Set<string> | undefined;
 
 /**
- * Whether an instance's charts come from VictoriaMetrics: only with
- * [victoriametrics], a vm_instance, and data for it there. Before the first
+ * Whether an instance's charts come from Zapdos: only with
+ * [zapdos], a zapdos_instance, and data for it there. Before the first
  * check it is assumed, so charts do not start empty.
  */
-function onVm(kind: VmKind, vmInstance: string) {
-  if (!cfg.victoriaMetrics || !vmInstance) return false;
-  return vmReady ? vmReady.has(`${kind}:${vmInstance}`) : true;
+function onVm(kind: VmKind, zapdosInstance: string) {
+  if (!cfg.zapdos || !zapdosInstance) return false;
+  return vmReady ? vmReady.has(`${kind}:${zapdosInstance}`) : true;
 }
 
 async function checkVm() {
-  const vm = cfg.victoriaMetrics;
+  const vm = cfg.zapdos;
   const next = new Set<string>();
   if (vm) {
     const L = vm.instanceLabel;
     const wanted: Record<VmKind, string[]> = {
-      rotom: cfg.instances.map((i) => i.vmInstance).filter(Boolean),
-      dragonite: cfg.dragonite.map((d) => d.vmInstance).filter(Boolean),
-      golbat: cfg.golbat?.vmInstance ? [cfg.golbat.vmInstance] : [],
+      rotom: cfg.instances.map((i) => i.zapdosInstance).filter(Boolean),
+      dragonite: cfg.dragonite.map((d) => d.zapdosInstance).filter(Boolean),
+      golbat: cfg.golbat?.zapdosInstance ? [cfg.golbat.zapdosInstance] : [],
     };
     for (const kind of Object.keys(wanted) as VmKind[]) {
       const names = wanted[kind];
@@ -166,7 +170,7 @@ async function checkVm() {
         const found = await vmScalars(vm, `count by (${L}) (last_over_time(${VM_PROBE[kind]}{${L}=~"${re}"${extra}}[1h]))`, L, 10_000);
         for (const n of names) if (found.has(n)) next.add(`${kind}:${n}`);
       } catch (e) {
-        console.error(`[vm] could not check ${kind} data in VictoriaMetrics, using memory: ${(e as Error).message}`);
+        console.error(`[zapdos] could not check ${kind} data in Zapdos, using memory: ${(e as Error).message}`);
       }
     }
     // Say which instances fall back to memory, once per change.
@@ -175,7 +179,7 @@ async function checkVm() {
         const k = `${kind}:${n}`;
         const before = vmReady ? vmReady.has(k) : undefined;
         if (before !== next.has(k)) {
-          console.log(`[vm] ${kind} "${n}": ${next.has(k) ? "data in VictoriaMetrics" : "no data in VictoriaMetrics, charts from memory"}`);
+          console.log(`[zapdos] ${kind} "${n}": ${next.has(k) ? "data in Zapdos" : "no data in Zapdos, charts from memory"}`);
         }
       }
     }
@@ -192,6 +196,7 @@ function reload(reason: string) {
     cfg = loadConfig(CONFIG_PATH);
     registry.apply(cfg);
     applyMemory();
+    applyStatsHistory();
     void checkVm();
     console.log(`[config] reloaded (${reason}): ${cfg.instances.length} instances, ${cfg.users.length} users`);
   } catch (e) {
@@ -278,24 +283,25 @@ app.get("/api/app", async (c) => {
   return c.json<AppInfo>({
     title: cfg.title,
     pollIntervalMs: cfg.pollIntervalMs,
-    historySource: cfg.instances.some((i) => onVm("rotom", i.vmInstance)) ? "victoriametrics" : "memory",
+    historySource: cfg.instances.some((i) => onVm("rotom", i.zapdosInstance)) ? "zapdos" : "memory",
     golbat: !!golbatCtx(),
     golbatMap: !!cfg.golbat?.api,
     map: cfg.map,
-    dragonite: cfg.dragonite.map(({ id, name, rotom, api, vmInstance }) => ({
+    dragonite: cfg.dragonite.map(({ id, name, rotom, api, zapdosInstance }) => ({
       id,
       name,
       rotom,
       accounts: !!api,
       historyMs: dragoniteSource([id])?.maxRangeMs ?? 0,
-      fromVm: onVm("dragonite", vmInstance),
+      fromVm: onVm("dragonite", zapdosInstance),
     })),
     dragoniteHistory: (() => {
       const all = dragoniteSource();
-      return all ? { source: all.source === "vm" ? "victoriametrics" : "memory", maxRangeMs: all.maxRangeMs } : undefined;
+      return all ? { source: all.source === "vm" ? "zapdos" : "memory", maxRangeMs: all.maxRangeMs } : undefined;
     })(),
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
     golbatStats: !!cfg.golbat?.api && cfg.dragonite.some((d) => d.api),
+    golbatStatsHistoryMs: statsEvery,
     instances: registry.list(),
   });
 });
@@ -319,7 +325,7 @@ app.get("/api/status", async (c) => {
 });
 
 const MAX_VM_RANGE_MS = 30 * 86_400_000;
-/** Short cache so several open tabs do not each hit VictoriaMetrics. */
+/** Short cache so several open tabs do not each hit Zapdos. */
 const vmCache = new Map<string, { at: number; data: Promise<unknown> }>();
 
 function cachedVm<T>(key: string, rangeMs: number, load: () => Promise<T>): Promise<T> {
@@ -337,18 +343,18 @@ function rangeParam(raw: string | undefined, max: number) {
   return Math.min(Math.max(Number(raw) || 3_600_000, 60_000), max);
 }
 
-// ---------- Golbat (VictoriaMetrics) ----------
+// ---------- Golbat (Zapdos) ----------
 
-/** Golbat's stored metrics: need [victoriametrics] and its vm_instance there. */
+/** Golbat's stored metrics: need [zapdos] and its zapdos_instance there. */
 /**
- * Where Golbat's charts come from: VictoriaMetrics when its vm_instance has
+ * Where Golbat's charts come from: Zapdos when its zapdos_instance has
  * data there, else the history kept in memory from its /metrics (needs url).
  */
 function golbatCtx() {
   const golbat = cfg.golbat;
   if (!golbat) return undefined;
-  if (cfg.victoriaMetrics && onVm("golbat", golbat.vmInstance)) {
-    return { vm: cfg.victoriaMetrics, golbat, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
+  if (cfg.zapdos && onVm("golbat", golbat.zapdosInstance)) {
+    return { vm: cfg.zapdos, golbat, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
   }
   if (localMetrics.has(LOCAL_GOLBAT)) {
     return { vm: LOCAL_VM, golbat: { ...golbat, selector: `instance="${LOCAL_GOLBAT}"` }, source: "memory" as const, maxRangeMs: localMetrics.retention };
@@ -356,7 +362,7 @@ function golbatCtx() {
   return undefined;
 }
 
-const NO_GOLBAT = { error: "requires url in [golbat] (or vm_instance with [victoriametrics])" };
+const NO_GOLBAT = { error: "requires url in [golbat] (or zapdos_instance with [zapdos])" };
 
 app.get("/api/golbat/meta", async (c) => {
   const ctx = golbatCtx();
@@ -403,28 +409,28 @@ app.get("/api/golbat/summary", async (c) => {
   }
 });
 
-// ---------- Dragonite (VictoriaMetrics + Rotom controllers) ----------
+// ---------- Dragonite (Zapdos + Rotom controllers) ----------
 
 const NO_DRAGONITE = {
-  error: "requires [stack.dragonite] with its API url (or vm_instance with [victoriametrics])",
+  error: "requires [stack.dragonite] with its API url (or zapdos_instance with [zapdos])",
 };
 
 /**
  * Where the charts of these Dragonites (every one when `ids` is empty) get
- * their series: VictoriaMetrics when each of them has data there under its
- * vm_instance, else the samples kept in memory from their /metrics. A chart
+ * their series: Zapdos when each of them has data there under its
+ * zapdos_instance, else the samples kept in memory from their /metrics. A chart
  * adds several Dragonites together, so it never mixes the two: one Dragonite
- * without data in VictoriaMetrics puts the whole chart on memory. `all` is the
+ * without data in Zapdos puts the whole chart on memory. `all` is the
  * stack list to build selectors from (in memory they are kept under their id).
  */
 function dragoniteSource(ids: string[] = []) {
   if (!cfg.dragonite.length) return undefined;
   const chosen = ids.length ? cfg.dragonite.filter((d) => ids.includes(d.id)) : cfg.dragonite;
-  if (cfg.victoriaMetrics && chosen.every((d) => onVm("dragonite", d.vmInstance))) {
-    return { vm: cfg.victoriaMetrics, all: cfg.dragonite, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
+  if (cfg.zapdos && chosen.every((d) => onVm("dragonite", d.zapdosInstance))) {
+    return { vm: cfg.zapdos, all: cfg.dragonite, source: "vm" as const, maxRangeMs: MAX_VM_RANGE_MS };
   }
   if (chosen.every((d) => localMetrics.has(d.id))) {
-    return { vm: LOCAL_VM, all: cfg.dragonite.map((d) => ({ ...d, vmInstance: d.id })), source: "memory" as const, maxRangeMs: localMetrics.retention };
+    return { vm: LOCAL_VM, all: cfg.dragonite.map((d) => ({ ...d, zapdosInstance: d.id })), source: "memory" as const, maxRangeMs: localMetrics.retention };
   }
   return undefined;
 }
@@ -484,7 +490,7 @@ app.get("/api/dragonite/summary", async (c) => {
   const all = cfg.dragonite;
   try {
     // These figures are per Dragonite, so each one can come from its own source.
-    const groups = new Map<string, { vm: VictoriaMetricsConfig; list: DragoniteConfig[] }>();
+    const groups = new Map<string, { vm: ZapdosConfig; list: DragoniteConfig[] }>();
     for (const d of all) {
       const one = dragoniteSource([d.id]);
       if (!one) continue;
@@ -496,8 +502,20 @@ app.get("/api/dragonite/summary", async (c) => {
     const stats = await cachedVm(`dragonite:stats:${key}`, 60_000 * 240 / 2, async () =>
       (await Promise.all([...groups.values()].map((g) => dragoniteStats(g.vm, g.list, 20_000)))).flat(),
     );
-    // Live links come from the Rotoms: each controller names its Dragonite in its user agent.
-    await registry.fresh();
+    // Live links come from the Rotoms: each controller names its Dragonite in its
+    // user agent, the same name each Dragonite reports in its config.
+    const [, instances] = await Promise.all([
+      registry.fresh(),
+      Promise.all(
+        all.map((d) =>
+          d.api
+            ? cachedVm(`dragonite-config:${d.id}`, 60_000 * 240, () => instanceConfig(d, cfg.requestTimeoutMs))
+                .then((x) => x.instance || undefined)
+                .catch(() => undefined)
+            : undefined,
+        ),
+      ),
+    ]);
     const links = new Map<string, Map<string, number>>();
     const unmatched: DragoniteSummary["unmatched"] = [];
     for (const s of registry.all()) {
@@ -507,7 +525,7 @@ app.get("/api/dragonite/summary", async (c) => {
         if (src) bySource.set(src, (bySource.get(src) ?? 0) + 1);
       }
       for (const [source, n] of bySource) {
-        const d = all.find((x) => sourceMatches(source, x));
+        const d = all.find((x, i) => sourceMatches(source, x, instances[i]));
         if (!d) {
           unmatched.push({ rotomId: s.cfg.id, source, controllers: n });
           continue;
@@ -881,6 +899,45 @@ app.get("/api/dragonite/:id/areas/:area/spawnpoints", async (c) => {
       return areaSpawnpoints(golbat, geometry, 30_000);
     });
     return c.json(data);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/** Whether this Dragonite has a Kōji to ask for routes (its config says so). */
+app.get("/api/dragonite/:id/koji", async (c) => {
+  const d = dragoniteWithApi(c.req.param("id"));
+  if (!d) return c.json({ error: "unknown Dragonite" }, 404);
+  try {
+    const conf = await cachedVm(`dragonite-config:${d.id}`, 60_000 * 240, () => instanceConfig(d, cfg.requestTimeoutMs));
+    return c.json({ available: conf.hasKoji });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/**
+ * Asks Kōji (through Dragonite) for one mode's route of an area, as the
+ * admin's "Get 70m Route" and alike: Dragonite stores it at once. Answers
+ * with the new route, read back from the area.
+ */
+app.post("/api/dragonite/:id/areas/:area/koji/:mode{pokemon|fort|quest}", async (c) => {
+  const d = dragoniteWithApi(c.req.param("id"));
+  const id = areaId(c.req.param("area"));
+  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
+  const mode = c.req.param("mode") as KojiMode;
+  if (!KOJI_MODES.includes(mode)) return c.json({ error: "unknown mode" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { bootstrap?: unknown };
+  // The quest route has no bootstrap in the admin.
+  const bootstrap = mode !== "quest" && body.bootstrap === true;
+  try {
+    // Kōji can take a while on big areas.
+    await recalculateRoute(d, id, mode, bootstrap, Math.max(cfg.requestTimeoutMs, 120_000));
+    const area = await getArea(d, id, cfg.requestTimeoutMs);
+    vmCache.delete(`dragonite-areas:${d.id}`);
+    console.log(`[dragonite] ${c.get("user")} asks Kōji for the ${mode}${bootstrap ? " bootstrap" : ""} route of area ${id} of ${d.name}`);
+    const route = ((area[`${mode}_mode`] ?? {}) as { route?: unknown }).route;
+    return c.json({ route: Array.isArray(route) ? route : [] });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
@@ -1689,6 +1746,9 @@ app.get("/api/system-status", async (c) => {
           channel: v ? (v.testing ? "testing" : "stable") : undefined,
           update: v && lv && newer(lv.n, v.n) > 0 ? lv.text : undefined,
         });
+        // On stable, a newer version that is only out on testing.
+        const tv = v && !v.testing && releases?.testing ? semver(releases.testing) : undefined;
+        if (v && tv && newer(tv.n, v.n) > 0) out.testing = tv.text;
       } else out.error = (conf.reason as Error).message;
       if (rate.status === "fulfilled") out.rateLimit = rate.value;
       if (raw.status === "fulfilled") {
@@ -1720,12 +1780,30 @@ app.get("/api/system-status", async (c) => {
       apiError: cfg.golbat.api && health.status === "rejected" ? (health.reason as Error).message : undefined,
     };
   }
+  // Zapdos: its VictoriaMetrics' /health, and which instances it has data for (checked every 5 min).
+  let zapdosHealth: SystemStatus["zapdos"]["health"];
+  if (cfg.zapdos) {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(`${cfg.zapdos.url}/health`, { headers: cfg.zapdos.headers, signal: AbortSignal.timeout(cfg.requestTimeoutMs) });
+      zapdosHealth = r.ok ? { ok: true, latencyMs: Date.now() - t0 } : { ok: false, error: `HTTP ${r.status}` };
+    } catch (e) {
+      zapdosHealth = { ok: false, error: (e as Error).message };
+    }
+  }
+  const zapdosInstances: SystemStatus["zapdos"]["instances"] = cfg.zapdos
+    ? [
+        ...cfg.instances.filter((i) => i.zapdosInstance).map((i) => ({ kind: "rotom" as const, name: i.name, zapdosInstance: i.zapdosInstance })),
+        ...cfg.dragonite.filter((d) => d.zapdosInstance).map((d) => ({ kind: "dragonite" as const, name: d.name, zapdosInstance: d.zapdosInstance })),
+        ...(cfg.golbat?.zapdosInstance ? [{ kind: "golbat" as const, name: "Golbat", zapdosInstance: cfg.golbat.zapdosInstance }] : []),
+      ].map((x) => ({ ...x, hasData: vmReady ? vmReady.has(`${x.kind}:${x.zapdosInstance}`) : undefined }))
+    : [];
   return c.json<SystemStatus>({
     checkedAt: Date.now(),
     releases,
     dragonite,
     golbat,
-    victoriaMetrics: { configured: !!cfg.victoriaMetrics, local: localMetrics.active },
+    zapdos: { configured: !!cfg.zapdos, local: localMetrics.active, health: zapdosHealth, instances: zapdosInstances },
     rotomReleases,
     rotom: registry.list().map((i) => ({ id: i.id, name: i.name, version: i.config?.version, ...rotomUpdate(i.config?.version) })),
   });
@@ -1843,34 +1921,99 @@ async function mapDevices(golbat: { url: string; headers: Record<string, string>
  * invasions, raids, lures, stations). Heavy (Golbat lists every Pokémon in
  * each area), so computed only when asked and shared for two minutes.
  */
-app.get("/api/golbat/area-stats", async (c) => {
+/** Every enabled area's statistics from Golbat, as the Statistics page shows them. */
+async function collectAreaStats(golbat: { url: string; headers: Record<string, string> }, stacks: typeof cfg.dragonite): Promise<AreaStatsResponse> {
+  const perStack = await Promise.all(
+    stacks.map(async (d) => {
+      const areas = await cachedVm(`dragonite-geofences:${d.id}`, 240 * 60_000, () => areaGeofences(d, cfg.requestTimeoutMs));
+      return areas.map((a) => ({ d, a }));
+    }),
+  );
+  const areas = await limited(perStack.flat(), 3, async ({ d, a }): Promise<AreaStats> => {
+    const base = { stack: d.id, stackName: d.name, rotom: d.rotom, areaId: a.id, area: a.name };
+    try {
+      const { partial, ...stats } = await areaStats(golbat, a.geometry, 30_000);
+      return { ...base, stats, partial };
+    } catch (e) {
+      return { ...base, error: (e as Error).message };
+    }
+  });
+  return { checkedAt: Date.now(), areas, totals: sumStats(areas.flatMap((x) => (x.stats ? [x.stats] : []))) };
+}
+
+const statsSetup = () => {
   const golbat = cfg.golbat?.api;
   const stacks = cfg.dragonite.filter((d) => d.api);
-  if (!golbat || !stacks.length) return c.json({ error: "requires url in [golbat] and a [stack.dragonite] with url" }, 404);
+  return golbat && stacks.length ? { golbat, stacks } : undefined;
+};
+
+app.get("/api/golbat/area-stats", async (c) => {
+  const setup = statsSetup();
+  if (!setup) return c.json({ error: "requires url in [golbat] and a [stack.dragonite] with url" }, 404);
   try {
-    const data = await cachedVm("golbat:area-stats", 2 * 60_000 * 240, async (): Promise<AreaStatsResponse> => {
-      const perStack = await Promise.all(
-        stacks.map(async (d) => {
-          const areas = await cachedVm(`dragonite-geofences:${d.id}`, 240 * 60_000, () => areaGeofences(d, cfg.requestTimeoutMs));
-          return areas.map((a) => ({ d, a }));
-        }),
-      );
-      const list = perStack.flat();
-      const areas = await limited(list, 3, async ({ d, a }): Promise<AreaStats> => {
-        const base = { stack: d.id, stackName: d.name, rotom: d.rotom, areaId: a.id, area: a.name };
-        try {
-          const { partial, ...stats } = await areaStats(golbat, a.geometry, 30_000);
-          return { ...base, stats, partial };
-        } catch (e) {
-          return { ...base, error: (e as Error).message };
-        }
-      });
-      return { checkedAt: Date.now(), areas, totals: sumStats(areas.flatMap((x) => (x.stats ? [x.stats] : []))) };
-    });
-    return c.json(data);
+    return c.json(await cachedVm(STATS_CACHE, 2 * 60_000 * 240, () => collectAreaStats(setup.golbat, setup.stacks)));
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
+});
+
+// ---- Statistics history ([golbat] stats_poll_interval): 24 h in memory ----
+
+const STATS_CACHE = "golbat:area-stats";
+const STATS_KEEP_MS = 24 * 3_600_000;
+/** One take: the totals and each area's figures, by "stack:areaId". */
+let statsHistory: { t: number; totals: AreaStatsCounts; areas: Record<string, AreaStatsCounts> }[] = [];
+let statsTimer: NodeJS.Timeout | undefined;
+let statsEvery: number | undefined;
+let statsBusy = false;
+
+async function takeStats() {
+  const setup = statsSetup();
+  if (!setup || statsBusy) return;
+  statsBusy = true;
+  try {
+    const data = await collectAreaStats(setup.golbat, setup.stacks);
+    // The Statistics page shows this same take instead of asking Golbat again.
+    vmCache.set(STATS_CACHE, { at: data.checkedAt, data: Promise.resolve(data) });
+    statsHistory.push({
+      t: data.checkedAt,
+      totals: data.totals,
+      areas: Object.fromEntries(data.areas.flatMap((a) => (a.stats ? [[`${a.stack}:${a.areaId}`, a.stats]] : []))),
+    });
+    statsHistory = statsHistory.filter((x) => x.t >= Date.now() - STATS_KEEP_MS);
+  } catch (e) {
+    console.error(`[golbat] statistics history: ${(e as Error).message}`);
+  } finally {
+    statsBusy = false;
+  }
+}
+
+/** Starts, stops or re-times the history to match config.toml (at start and on every reload). */
+function applyStatsHistory() {
+  const every = statsSetup() ? cfg.golbat?.statsPollIntervalMs : undefined;
+  if (every === statsEvery) return;
+  clearInterval(statsTimer);
+  statsTimer = undefined;
+  statsEvery = every;
+  if (!every) {
+    statsHistory = [];
+    return;
+  }
+  void takeStats();
+  statsTimer = setInterval(() => void takeStats(), every);
+  statsTimer.unref();
+}
+applyStatsHistory();
+
+/** The totals' history, or one area's (?area=stack:areaId). */
+app.get("/api/golbat/area-stats/history", (c) => {
+  if (!statsEvery) return c.json({ error: "set stats_poll_interval in [golbat] to keep a history" }, 404);
+  const area = c.req.query("area");
+  const points = statsHistory.flatMap((x) => {
+    const stats = area ? x.areas[area] : x.totals;
+    return stats ? [{ t: x.t, stats }] : [];
+  });
+  return c.json({ intervalMs: statsEvery, points });
 });
 
 app.get("/api/golbat/devices", async (c) => {
@@ -1975,12 +2118,12 @@ app.get("/api/golbat/trail", (c) => {
   return c.json(withoutJumps((trails.get(trailKey(instance, controller)) ?? []).filter((p) => p.t >= since)));
 });
 
-/** The Rotom instances whose charts come from VictoriaMetrics (data there under their vm_instance). */
-/** The Rotom instances whose charts come from VictoriaMetrics (data there under their vm_instance). */
-const rotomOnVm = () => cfg.instances.filter((i) => onVm("rotom", i.vmInstance));
+/** The Rotom instances whose charts come from Zapdos (data there under their zapdos_instance). */
+/** The Rotom instances whose charts come from Zapdos (data there under their zapdos_instance). */
+const rotomOnVm = () => cfg.instances.filter((i) => onVm("rotom", i.zapdosInstance));
 /** The rest, kept in memory: under localRotom(id) there, so their queries use that. */
 const rotomInMemory = () =>
-  cfg.instances.filter((i) => !onVm("rotom", i.vmInstance) && localMetrics.has(localRotom(i.id))).map((i) => ({ ...i, vmInstance: localRotom(i.id) }));
+  cfg.instances.filter((i) => !onVm("rotom", i.zapdosInstance) && localMetrics.has(localRotom(i.id))).map((i) => ({ ...i, zapdosInstance: localRotom(i.id) }));
 
 /**
  * Runs one Rotom chart query on both sources, each with its own instances,
@@ -1989,16 +2132,16 @@ const rotomInMemory = () =>
 async function rotomBoth<T>(
   key: string,
   rangeMs: number,
-  run: (vm: VictoriaMetricsConfig, list: RotomInstanceConfig[]) => Promise<Record<string, T>>,
+  run: (vm: ZapdosConfig, list: RotomInstanceConfig[]) => Promise<Record<string, T>>,
 ): Promise<Record<string, T>> {
-  const vm = cfg.victoriaMetrics;
+  const vm = cfg.zapdos;
   const fromVm = vm ? rotomOnVm() : [];
   const fromMemory = rotomInMemory();
   const [a, b] = await Promise.all([
     vm && fromVm.length
       ? cachedVm(`${key}:vm:${fromVm.map((i) => i.id).join(",")}`, rangeMs, () => run(vm, fromVm)).catch((e) => {
-          // VictoriaMetrics failing: the other instances still show.
-          console.error(`[vm] ${key}: ${(e as Error).message}`);
+          // Zapdos failing: the other instances still show.
+          console.error(`[zapdos] ${key}: ${(e as Error).message}`);
           return {} as Record<string, T>;
         })
       : ({} as Record<string, T>),
@@ -2009,7 +2152,7 @@ async function rotomBoth<T>(
 
 const NO_ROTOM_HISTORY = { error: "no RotomNG has history yet" };
 
-// Each instance has its own series here, so they can mix: VictoriaMetrics for
+// Each instance has its own series here, so they can mix: Zapdos for
 // those with data there, the history kept in memory for the rest.
 app.get("/api/history", async (c) => {
   const rangeMs = rangeParam(c.req.query("range"), rotomOnVm().length ? MAX_VM_RANGE_MS : cfg.historyRetentionMs);

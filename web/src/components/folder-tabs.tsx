@@ -8,6 +8,8 @@ export interface FolderTab {
   color?: string;
   /** Short figures shown on closed tabs (the open one shows them in its panel). */
   summary?: ReactNode;
+  /** Only as wide as its content (the "All" tab), while the stacks share the rest. */
+  compact?: boolean;
 }
 
 /** The tint of an open tab and of the top of its panel. */
@@ -33,7 +35,8 @@ export function FolderTabs({ tabs, value, onChange, label }: { tabs: FolderTab[]
             aria-selected={selected}
             onClick={() => onChange(t.id)}
             className={cn(
-              "relative flex min-w-0 flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-t-xl border px-3 text-sm transition-colors",
+              "relative flex min-w-0 items-center justify-center gap-2.5 overflow-hidden rounded-t-xl border px-3 text-sm transition-colors",
+              t.compact ? "flex-none px-4" : "flex-1",
               selected
                 ? // 1px over the panel's top border, with the panel's colour: the tab opens into it.
                   "z-10 -mb-px border-b-transparent pt-3 pb-3 text-foreground"
@@ -55,29 +58,22 @@ export function FolderTabs({ tabs, value, onChange, label }: { tabs: FolderTab[]
   );
 }
 
-/** Which outer corner the open tab sits on, so the panel squares that corner. */
-export function tabEdge(tabs: FolderTab[], value: string): "left" | "right" | undefined {
-  if (tabs.length < 2) return undefined;
-  if (tabs[0].id === value) return "left";
-  if (tabs.at(-1)!.id === value) return "right";
-  return undefined;
-}
-
 /** The panel an open tab belongs to: the tab's tint at its top, fading to the card. */
 export function FolderPanel({
   color,
-  edge,
+  tabbed,
   className,
   children,
 }: {
   color?: string;
-  edge?: "left" | "right";
+  /** Under folder tabs: square top corners, since the tabs cover its whole top edge. */
+  tabbed?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <div
-      className={cn("relative overflow-hidden rounded-xl border px-4 py-3", edge === "left" && "rounded-tl-none", edge === "right" && "rounded-tr-none", className)}
+      className={cn("relative overflow-hidden rounded-xl border px-4 py-3", tabbed && "rounded-t-none", className)}
       style={{ background: `linear-gradient(180deg, ${tabTint(color ?? NEUTRAL)}, var(--card) 85%)` }}
     >
       {children}

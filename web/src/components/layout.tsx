@@ -181,7 +181,7 @@ function DragoniteHealth() {
 function GolbatHealth() {
   const { data } = useQuery({ queryKey: ["golbat-summary"], queryFn: endpoints.golbatSummary, refetchInterval: 60_000 });
   if (!data) return null;
-  // VictoriaMetrics scrapes every few seconds; two minutes without data means Golbat is down.
+  // Zapdos scrapes every few seconds; two minutes without data means Golbat is down.
   const ok = data.lastSeenS != null && data.lastSeenS < 120;
   return (
     <HoverCard

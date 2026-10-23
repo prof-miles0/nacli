@@ -2,7 +2,7 @@ import type { DragoniteSummary } from "@shared/types";
 
 export type DragoniteRow = DragoniteSummary["instances"][number];
 
-/** VictoriaMetrics scrapes every few seconds; two minutes without data means it is down. */
+/** Zapdos scrapes every few seconds; two minutes without data means it is down. */
 export const isUp = (d: DragoniteRow) => d.lastSeenS != null && d.lastSeenS < 120;
 
 /**

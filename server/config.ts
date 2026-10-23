@@ -15,16 +15,16 @@ export interface RotomInstanceConfig {
   url: string;
   apiSecret?: string;
   headers: Record<string, string>;
-  /** Value of the VictoriaMetrics instance label for this RotomNG. */
-  vmInstance: string;
+  /** Value of the Zapdos instance label for this RotomNG. */
+  zapdosInstance: string;
 }
 
 export interface DragoniteConfig {
   /** Stable id used in URLs, derived from the name. */
   id: string;
   name: string;
-  /** Value of the VictoriaMetrics instance label for this Dragonite. */
-  vmInstance: string;
+  /** Value of the Zapdos instance label for this Dragonite. */
+  zapdosInstance: string;
   /** Id of the RotomNG of its own [[stack]], which it sends its controllers to. */
   rotom?: string;
   /**
@@ -34,7 +34,7 @@ export interface DragoniteConfig {
   api?: { url: string; headers: Record<string, string> };
 }
 
-export interface VictoriaMetricsConfig {
+export interface ZapdosConfig {
   url: string;
   headers: Record<string, string>;
   /** Label that identifies each RotomNG in the scraped series. */
@@ -63,23 +63,25 @@ export interface AppConfig {
   pollIntervalMs: number;
   requestTimeoutMs: number;
   historyRetentionMs: number;
-  /** When set, chart history comes from VictoriaMetrics instead of memory. */
-  victoriaMetrics?: VictoriaMetricsConfig;
+  /** When set, chart history comes from Zapdos instead of memory. */
+  zapdos?: ZapdosConfig;
   /**
-   * Golbat section: charts from VictoriaMetrics (`selector`) and, with `url`,
+   * Golbat section: charts from Zapdos (`selector`) and, with `url`,
    * its API (device locations for the Dashboard map).
    */
   golbat?: {
-    /** Its `instance` label in VictoriaMetrics, for the stored charts ("" = any). */
-    vmInstance: string;
-    /** PromQL matcher built from vmInstance and [victoriametrics] instance_label. */
+    /** Its `instance` label in Zapdos, for the stored charts ("" = any). */
+    zapdosInstance: string;
+    /** PromQL matcher built from zapdosInstance and [zapdos] instance_label. */
     selector: string;
     /** Its API (url + api_secret): device locations and queries. */
     api?: { url: string; headers: Record<string, string> };
+    /** stats_poll_interval: how often the area statistics are taken and kept for 24 h (unset: no history). */
+    statsPollIntervalMs?: number;
   };
   /** Basemap for the Dashboard map ([map]); sent to the browser, which draws it. */
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
-  /** Dragonite section (charts from VictoriaMetrics), one per [[stack]] with [stack.dragonite]. */
+  /** Dragonite section (charts from Zapdos), one per [[stack]] with [stack.dragonite]. */
   dragonite: DragoniteConfig[];
   users: UserConfig[];
   instances: RotomInstanceConfig[];
@@ -188,14 +190,14 @@ export function loadConfig(path: string): AppConfig {
       ).toString("base64")}`;
     }
     const apiSecret = str(r.api_secret) || undefined;
-    // Its `instance` label in VictoriaMetrics, used only with [victoriametrics].
+    // Its `instance` label in Zapdos, used only with [zapdos].
     // Never guessed from the url (an IP or another proxy would break it):
     // without it, its charts come from the history kept in memory.
-    const vmInstance = str(r.vm_instance).trim();
-    return { id, name, url, apiSecret, headers, vmInstance };
+    const zapdosInstance = str(r.zapdos_instance).trim();
+    return { id, name, url, apiSecret, headers, zapdosInstance };
   });
 
-  const vm = parseVm(raw.victoriametrics as Table | undefined);
+  const vm = parseVm(raw.zapdos as Table | undefined);
   return {
     path: abs,
     title: str(server.title, "Nacli"),
@@ -207,7 +209,7 @@ export function loadConfig(path: string): AppConfig {
     pollIntervalMs: Math.max(2000, parseDuration(server.poll_interval, 10_000)),
     requestTimeoutMs: parseDuration(server.request_timeout, 8000),
     historyRetentionMs: parseDuration(server.history_retention, 24 * 3_600_000),
-    victoriaMetrics: vm,
+    zapdos: vm,
     golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
     dragonite: parseDragonite(stacks, instances),
@@ -240,8 +242,8 @@ function parseDragonite(
       return {
         id,
         name,
-        // Without it (or without [victoriametrics]) its charts come from memory.
-        vmInstance: str(d.vm_instance).trim(),
+        // Without it (or without [zapdos]) its charts come from memory.
+        zapdosInstance: str(d.zapdos_instance).trim(),
         // It feeds the Rotom of its own stack.
         rotom: rotom ? rotoms.find((r) => r.name === name)?.id : undefined,
         api: url ? { url, headers } : undefined,
@@ -266,22 +268,26 @@ function parseMap(m: Table) {
   };
 }
 
-function parseGolbat(g: Table, vm?: VictoriaMetricsConfig) {
+function parseGolbat(g: Table, vm?: ZapdosConfig) {
   const url = str(g.url).trim().replace(/\/+$/, "");
   if (url && !/^https?:\/\//.test(url)) throw new Error("[golbat] url must start with http:// or https://");
   const headers: Record<string, string> = {};
   // Golbat checks its api_secret in this header.
   if (str(g.api_secret)) headers["X-Golbat-Secret"] = str(g.api_secret);
-  const vmInstance = str(g.vm_instance).trim();
+  const zapdosInstance = str(g.zapdos_instance).trim();
   const label = vm?.instanceLabel ?? "instance";
-  const selector = vmInstance ? `${label}="${vmInstance.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : "";
-  return { vmInstance, selector, api: url ? { url, headers } : undefined };
+  const selector = zapdosInstance ? `${label}="${zapdosInstance.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : "";
+  // Area statistics history: off unless an interval is given.
+  const statsPollIntervalMs = parseDuration(g.stats_poll_interval, 0);
+  if (statsPollIntervalMs && statsPollIntervalMs < 60_000) throw new Error("[golbat] stats_poll_interval must be at least 1m");
+  if (statsPollIntervalMs && !url) throw new Error("[golbat] stats_poll_interval needs url");
+  return { zapdosInstance, selector, api: url ? { url, headers } : undefined, statsPollIntervalMs: statsPollIntervalMs || undefined };
 }
 
-function parseVm(vm: Table | undefined): VictoriaMetricsConfig | undefined {
+function parseVm(vm: Table | undefined): ZapdosConfig | undefined {
   const url = str(vm?.url).trim().replace(/\/+$/, "");
   if (!vm || !url) return undefined;
-  if (!/^https?:\/\//.test(url)) throw new Error("[victoriametrics] url must start with http:// or https://");
+  if (!/^https?:\/\//.test(url)) throw new Error("[zapdos] url must start with http:// or https://");
   const headers: Record<string, string> = {};
   if (vm.username) {
     headers.Authorization = `Basic ${Buffer.from(`${str(vm.username)}:${str(vm.password)}`).toString("base64")}`;

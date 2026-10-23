@@ -23,7 +23,7 @@ const INTERVAL = "10m";
 
 export function GolbatMetricsPage() {
   const { data: app } = useAppInfo();
-  // 30 days from VictoriaMetrics; only history_retention when from memory.
+  // 30 days from Zapdos; only history_retention when from memory.
   const ranges = RANGES.filter((r) => Number(r.value) <= (app?.golbatHistoryMs || Infinity));
   const [chosenRange, setRange] = useState(RANGES[2].value);
   const range = ranges.some((r) => r.value === chosenRange) ? chosenRange : (ranges.at(-1)?.value ?? chosenRange);

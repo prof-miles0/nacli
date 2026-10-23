@@ -139,9 +139,15 @@
     @apply border-border outline-ring/50;
   }
   /* Always keep room for the vertical scrollbar, so the page is just as wide
-     whether a page scrolls or not (no jump when content grows or shrinks). */
+     whether a page scrolls or not (no jump when content grows or shrinks).
+     overflow-y: scroll does the same where scrollbar-gutter is not supported. */
   html {
+    overflow-y: scroll;
     scrollbar-gutter: stable;
+  }
+  /* An open modal holds the page still behind it; the gutter keeps its width. */
+  html.modal-open {
+    overflow: hidden;
   }
   body {
     @apply bg-background text-foreground antialiased;

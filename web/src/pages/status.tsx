@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpCircle, CheckCircle2, CircleAlert, CircleX, Gauge, Pause, RefreshCw, RotateCcw, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, CheckCircle2, CircleAlert, CirclePause, CircleX, Gauge, Group, type LucideIcon, MemoryStick, RefreshCw, Router, TrafficCone, TriangleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { DragoniteStatus, InstanceInfo, SystemStatus } from "@shared/types";
 import { OneLine } from "@/components/one-line";
@@ -134,7 +134,8 @@ function UpToDate() {
 
 /**
  * Versions at a glance: a green card when every Dragonite and Rotom runs the
- * newest release of its channel, blue when something can be updated.
+ * newest release of its channel, blue (listing only what is behind) when
+ * something can be updated.
  */
 function VersionsSummary({ data, instances }: { data: SystemStatus; instances: InstanceInfo[] }) {
   const drag = data.dragonite.filter((d) => d.reachable && d.version);
@@ -145,20 +146,14 @@ function VersionsSummary({ data, instances }: { data: SystemStatus; instances: I
     ...drag.filter((d) => d.update).map((d) => ({ key: `d:${d.id}`, text: `Dragonite ${d.name}: v${d.version} → v${d.update}`, href: `${RELEASES}${d.update}` })),
     ...rot.filter((r) => r.update).map((r) => ({ key: `r:${r.id}`, text: `Rotom ${r.name}: v${r.version} → v${r.update}`, href: `${ROTOM_RELEASES}${r.update}` })),
   ];
-  // Who runs what: "v1.20.16-testing · Exeggcute, Lunala".
-  const byVersion = (list: { name: string; version?: string }[]) => {
-    const m = new Map<string, string[]>();
-    for (const x of list) m.set(x.version!, [...(m.get(x.version!) ?? []), x.name]);
-    return [...m].map(([v, names]) => `v${v} · ${names.join(", ")}`).join(" — ");
-  };
   const tone = !known ? "var(--muted-foreground)" : updates.length ? "#3b82f6" : "#22c55e";
   const Icon = !known ? CircleAlert : updates.length ? ArrowUpCircle : CheckCircle2;
   return (
     <div
-      className="flex items-start gap-3 rounded-xl border px-4 py-3"
+      className={cn("flex gap-3 rounded-xl border px-4 py-3", updates.length ? "items-start" : "items-center")}
       style={{ borderColor: `color-mix(in oklab, ${tone} 45%, var(--border))`, background: `color-mix(in oklab, ${tone} 12%, var(--card))` }}
     >
-      <Icon className="mt-0.5 size-6 shrink-0" style={{ color: tone }} />
+      <Icon className={cn("size-6 shrink-0", updates.length && "mt-0.5")} style={{ color: tone }} />
       <div className="flex min-w-0 flex-col gap-1">
         <p className="font-semibold" style={{ color: tone }}>
           {!known ? "Checking for updates…" : updates.length ? `${updates.length} update${updates.length === 1 ? "" : "s"} available` : "Everything is up to date"}
@@ -174,11 +169,6 @@ function VersionsSummary({ data, instances }: { data: SystemStatus; instances: I
             ))}
           </ul>
         ) : null}
-        <p className="text-xs text-muted-foreground">
-          {drag.length ? <>Dragonite {byVersion(drag)}</> : null}
-          {drag.length && rot.length ? <br /> : null}
-          {rot.length ? <>RotomNG {byVersion(rot)}</> : null}
-        </p>
       </div>
     </div>
   );
@@ -222,11 +212,14 @@ function DragoniteCard({ d, releases, color }: { d: DragoniteStatus; releases: S
                 ) : null}
               </span>
             }
+            // Nothing to say when it is up to date, unless testing already has something newer.
             detail={
               d.update
                 ? `Update available on the ${d.channel} channel.`
                 : latest
-                  ? `Up to date (newest ${d.channel}: v${latest}).`
+                  ? d.testing
+                    ? `v${d.testing} is out on testing.`
+                    : undefined
                   : releases?.error
                     ? `Couldn't check for updates: ${releases.error}`
                     : "Checking for updates…"
@@ -288,12 +281,13 @@ function DragoniteCard({ d, releases, color }: { d: DragoniteStatus; releases: S
 }
 
 type Control = "pause-limit" | "reset-limit" | "reload-proxies" | "reload-accounts" | "reload-dragonite";
-const CONTROLS: { action: Control; label: string; icon: typeof Pause; done: string }[] = [
-  { action: "pause-limit", label: "Pause limit", icon: Pause, done: "global rate limit paused" },
-  { action: "reset-limit", label: "Reset limit", icon: RotateCcw, done: "global rate limit reset" },
-  { action: "reload-proxies", label: "Reload proxies", icon: RefreshCw, done: "proxies reloaded" },
-  { action: "reload-accounts", label: "Reload accounts", icon: RefreshCw, done: "accounts reloaded" },
-  { action: "reload-dragonite", label: "Reload Dragonite", icon: RefreshCw, done: "reloading its configuration" },
+/** Dragonite Admin's controls, with its icons and in its order. */
+const CONTROLS: { action: Control; label: string; hint: string; icon: LucideIcon; done: string }[] = [
+  { action: "pause-limit", label: "Pause global limit", hint: "Lifts the global rate limit for a while", icon: CirclePause, done: "global rate limit paused" },
+  { action: "reset-limit", label: "Reset global limit", hint: "Puts the global rate limit back to its base rate", icon: TrafficCone, done: "global rate limit reset" },
+  { action: "reload-proxies", label: "Reload proxies", hint: "Reads the proxy list again", icon: Router, done: "proxies reloaded" },
+  { action: "reload-accounts", label: "Reload accounts", hint: "Reads the accounts again", icon: Group, done: "accounts reloaded" },
+  { action: "reload-dragonite", label: "Reload Dragonite", hint: "Reloads its configuration", icon: MemoryStick, done: "reloading its configuration" },
 ];
 
 /** The admin's top-right controls, for this Dragonite only. */
@@ -319,19 +313,31 @@ function DragoniteControls({ d }: { d: DragoniteStatus }) {
   const okSeconds = Number.isInteger(n) && n >= 1 && n <= 86_400;
   return (
     // At the bottom of the card, so the buttons of cards side by side line up.
-    <div className="mt-auto flex flex-wrap gap-1.5 border-t pt-3">
+    <div className="mt-auto flex flex-wrap gap-1 border-t pt-3">
       {CONTROLS.map((c) => (
-        <Button
+        <HoverCard
           key={c.action}
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-xs"
-          disabled={!!busy}
-          onClick={() => (c.action === "pause-limit" ? setPausing(true) : run(c))}
+          className="inline-flex"
+          content={
+            <span className="flex flex-col gap-0.5">
+              <span className="font-medium">{c.label}</span>
+              <span className="text-muted-foreground">{c.hint}</span>
+            </span>
+          }
         >
-          {busy === c.action ? <Spinner className="size-3.5" /> : <c.icon className="size-3.5" />}
-          {c.label}
-        </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="relative size-9 text-muted-foreground hover:text-foreground"
+            disabled={!!busy}
+            aria-label={c.label}
+            onClick={() => (c.action === "pause-limit" ? setPausing(true) : run(c))}
+          >
+            <c.icon className="size-4.5!" />
+            {/* The admin's small refresh badge, spinning while it runs. */}
+            <RefreshCw className={cn("absolute right-1 bottom-1 size-3! rounded-full bg-card p-px", busy === c.action && "animate-spin")} />
+          </Button>
+        </HoverCard>
       ))}
       {pausing ? (
         <Modal
@@ -350,7 +356,7 @@ function DragoniteControls({ d }: { d: DragoniteStatus }) {
                   run(CONTROLS[0], n);
                 }}
               >
-                <Pause />
+                <CirclePause />
                 Pause
               </Button>
             </>
@@ -416,7 +422,9 @@ function RotomCard({ i, color, v, releases }: { i: InstanceInfo; color: string; 
                 : v?.update
                   ? "Update available."
                   : releases?.stable
-                    ? `Up to date (newest stable: v${releases.stable})${v?.preRelease ? ` · pre-release v${v.preRelease} out` : ""}.`
+                    ? v?.preRelease
+                      ? `Pre-release v${v.preRelease} is out.`
+                      : undefined
                     : releases?.error
                       ? `Couldn't check for updates: ${releases.error}`
                       : "Checking for updates…"
@@ -443,7 +451,7 @@ function RotomCard({ i, color, v, releases }: { i: InstanceInfo; color: string; 
 function GolbatCard({ g }: { g: NonNullable<SystemStatus["golbat"]> }) {
   const fresh = g.lastSeenS != null && g.lastSeenS < 120;
   return (
-    <Card className="gap-1 p-4">
+    <Card className="flex-1 gap-1 p-4">
       <h3 className="mb-1 font-semibold">Golbat</h3>
       <div className="flex flex-col divide-y divide-border/60">
         {g.api ? (
@@ -465,6 +473,41 @@ function GolbatCard({ g }: { g: NonNullable<SystemStatus["golbat"]> }) {
             />
           </>
         ) : null}
+      </div>
+    </Card>
+  );
+}
+
+const KIND_LABEL = { rotom: "Rotom", dragonite: "Dragonite", golbat: "Golbat" } as const;
+
+/** Zapdos (its VictoriaMetrics): whether it answers, and which instances' charts it holds. */
+function ZapdosCard({ z }: { z: SystemStatus["zapdos"] }) {
+  const ok = !!z.health?.ok;
+  return (
+    <Card className="flex-1 gap-1 p-4">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h3 className="font-semibold">Zapdos</h3>
+        <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap", ok ? "text-green-400" : "text-red-400")}>
+          <span className={cn("size-2 rounded-full", ok ? "bg-green-500" : "bg-red-500")} />
+          {ok ? `online · ${z.health?.latencyMs} ms` : "offline"}
+        </span>
+      </div>
+      <div className="flex flex-col divide-y divide-border/60">
+        <Row
+          label="VictoriaMetrics"
+          level={ok ? "ok" : "error"}
+          value={ok ? "Healthy" : "Not answering"}
+          detail={ok ? undefined : z.health?.error}
+        />
+        {z.instances.map((x) => (
+          <Row
+            key={`${x.kind}:${x.zapdosInstance}`}
+            label={x.kind === "golbat" ? "Golbat" : `${KIND_LABEL[x.kind]} ${x.name}`}
+            level={x.hasData === undefined ? "off" : x.hasData ? "ok" : "warn"}
+            value={x.hasData === undefined ? "Checking…" : x.hasData ? "Data" : "No data"}
+            detail={x.hasData === false ? `Nothing as “${x.zapdosInstance}” for 1 h · charts from memory` : undefined}
+          />
+        ))}
       </div>
     </Card>
   );
@@ -502,13 +545,22 @@ export function StatusPage() {
           </div>
         </>
       ) : null}
-      {data.golbat ? (
-        <>
-          <SectionTitle>Golbat</SectionTitle>
-          <div className="grid gap-3 md:grid-cols-2">
-            <GolbatCard g={data.golbat} />
-          </div>
-        </>
+      {/* Golbat and Zapdos side by side when there is room. */}
+      {data.golbat || data.zapdos.configured ? (
+        <div className="grid gap-x-3 gap-y-4 md:grid-cols-2">
+          {data.golbat ? (
+            <div className="flex flex-col gap-4">
+              <SectionTitle>Golbat</SectionTitle>
+              <GolbatCard g={data.golbat} />
+            </div>
+          ) : null}
+          {data.zapdos.configured ? (
+            <div className="flex flex-col gap-4">
+              <SectionTitle>Zapdos</SectionTitle>
+              <ZapdosCard z={data.zapdos} />
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <p className="text-[11px] text-muted-foreground">
         Checked {fmt.ago(data.checkedAt)} · updates every 15 s · Dragonite and RotomNG releases from GitHub{data.releases?.checkedAt ? `, checked ${fmt.ago(data.releases.checkedAt)}` : ""}. Rate-limit

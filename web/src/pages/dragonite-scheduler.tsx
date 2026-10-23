@@ -2,10 +2,11 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Copy, History, ListChecks, Pencil, Play, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import type { DragoniteInfo, GroupOut, SchedActivity, SchedAreaActivity, ScheduleOut, SchedRun } from "@shared/types";
-import { type FolderTab, FolderPanel, FolderTabs, tabEdge } from "@/components/folder-tabs";
+import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { MenuButton } from "@/components/menu-button";
 import { CopyScheduleModal, GroupModal, QuestMigrationModal, RunNowModal, ScheduleModal } from "@/components/scheduler-forms";
+import { useStacks } from "@/components/stack-tag";
 import { matches, SearchBox, Toggle, useSorted } from "@/components/table-tools";
 import { toast } from "@/components/toaster";
 import { Button, Card, HoverCard, Modal, Select, Spinner, Table } from "@/components/ui";
@@ -109,13 +110,14 @@ export function DragoniteSchedulerPage() {
           />
         ) : null
       }
-      edge={stacks.length > 1 ? tabEdge(tabs, current.id) : undefined}
+      tabbed={stacks.length > 1}
     />
   );
 }
 
 /** One stack's scheduler: summary, problems, and its schedules, groups and run ledger. */
-function StackScheduler({ stack, others, tabs, edge }: { stack: DragoniteInfo; others: DragoniteInfo[]; tabs: React.ReactNode; edge?: "left" | "right" }) {
+function StackScheduler({ stack, others, tabs, tabbed }: { stack: DragoniteInfo; others: DragoniteInfo[]; tabs: React.ReactNode; tabbed?: boolean }) {
+  const { multi, on } = useStacks();
   const color = useInstanceColor();
   const qc = useQueryClient();
   const stackColor = stack.rotom ? color(stack.rotom) : "var(--muted-foreground)";
@@ -143,7 +145,7 @@ function StackScheduler({ stack, others, tabs, edge }: { stack: DragoniteInfo; o
     <div className="animate-in flex flex-col gap-3">
       <div className="flex flex-col">
         {tabs}
-        <FolderPanel color={stackColor} edge={edge}>
+        <FolderPanel color={stackColor} tabbed={tabbed}>
           {!schedules.data ? (
             schedules.error ? <p className="text-sm text-red-300">{(schedules.error as Error).message}</p> : <Spinner />
           ) : (
@@ -186,7 +188,7 @@ function StackScheduler({ stack, others, tabs, edge }: { stack: DragoniteInfo; o
                 onClick={async () => {
                   try {
                     await endpoints.scheduler.reload(stack.id);
-                    toast({ text: `${stack.name} is reloading its configuration` });
+                    toast({ text: `${multi ? stack.name : "Dragonite"} is reloading its configuration` });
                     refresh();
                   } catch (e) {
                     toast({ text: (e as Error).message, error: true });
@@ -301,6 +303,7 @@ function SchedulesView({
   refresh: () => void;
   onRuns: (id: number) => void;
 }) {
+  const { on } = useStacks();
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<ScheduleOut | "new">();
@@ -327,7 +330,7 @@ function SchedulesView({
     setPending((p) => ({ ...p, [s.id]: !s.enabled }));
     try {
       await endpoints.scheduler.setEnabled(stack.id, s.id, !s.enabled);
-      toast({ text: `“${s.name}” ${s.enabled ? "disabled" : "enabled"} on ${stack.name}` });
+      toast({ text: `“${s.name}” ${s.enabled ? "disabled" : "enabled"}${on(stack.id)}` });
       refresh();
     } catch (e) {
       toast({ text: (e as Error).message, error: true });
@@ -503,13 +506,13 @@ function SchedulesView({
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await endpoints.scheduler.deleteSchedule(stack.id, deleting.id);
-            toast({ text: `Schedule “${deleting.name}” deleted from ${stack.name}` });
+            toast({ text: `Schedule “${deleting.name}” deleted${on(stack.id, "from")}` });
             refresh();
           }}
         >
           {deleting.source === "config"
             ? "This schedule is config-seeded: it reproduces Dragonite's built-in cron behaviour, and deleting it stops route recalculation."
-            : `“${deleting.name}” will be removed from ${stack.name}.`}
+            : `“${deleting.name}” will be removed${on(stack.id, "from")}.`}
         </Confirm>
       ) : null}
     </div>
@@ -559,6 +562,7 @@ function ScheduleDetail({ s, onRun }: { s: ScheduleOut; onRun: (idx: number) => 
 }
 
 function GroupsView({ stack, list, schedules, error, refresh }: { stack: DragoniteInfo; list?: GroupOut[]; schedules: ScheduleOut[]; error: Error | null; refresh: () => void }) {
+  const { on } = useStacks();
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<GroupOut | "new">();
   const [deleting, setDeleting] = useState<GroupOut>();
@@ -605,7 +609,7 @@ function GroupsView({ stack, list, schedules, error, refresh }: { stack: Dragoni
       ) : !list ? (
         <Spinner />
       ) : !list.length ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">{stack.name} has no groups of its own yet.</Card>
+        <Card className="p-6 text-center text-sm text-muted-foreground">No groups of its own{on(stack.id)} yet.</Card>
       ) : (
         <>
           <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card sm:hidden">
@@ -657,11 +661,11 @@ function GroupsView({ stack, list, schedules, error, refresh }: { stack: Dragoni
           onClose={() => setDeleting(undefined)}
           onConfirm={async () => {
             await endpoints.scheduler.deleteGroup(stack.id, deleting.id);
-            toast({ text: `Group “${deleting.name}” deleted from ${stack.name}` });
+            toast({ text: `Group “${deleting.name}” deleted${on(stack.id, "from")}` });
             refresh();
           }}
         >
-          “{deleting.name}” will be removed from {stack.name}.
+          “{deleting.name}” will be removed{on(stack.id, "from")}.
         </Confirm>
       ) : null}
     </div>
