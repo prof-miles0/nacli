@@ -253,7 +253,8 @@ export function WorkersPage() {
                     {shown.map((w) => {
                       const c = w.session?.controller;
                       return (
-                        <tr key={w.id}>
+                        // One fixed height for every row (some cells are a fraction taller than others).
+                        <tr key={w.id} className="h-[38px]">
                           <td>
                             <WorkerName w={w} />
                           </td>
@@ -261,7 +262,9 @@ export function WorkersPage() {
                           <td className="whitespace-nowrap">
                             {c ? <HoverCard content={<ControllerDetails c={c} />}>{c.id}</HoverCard> : "—"}
                           </td>
-                          <td className="text-muted-foreground">
+                          {/* One line, as every cell: rows keep one height, so the refreshes that
+                              reorder them do not move the page. */}
+                          <td className="whitespace-nowrap text-muted-foreground">
                             {c ? (
                               <>
                                 {c.account_username} <span className="text-[10px] opacity-70">{c.account_source}</span>
@@ -275,17 +278,20 @@ export function WorkersPage() {
                           <td className="whitespace-nowrap text-muted-foreground">
                             {w.session ? fmt.duration(Date.now() - w.session.connected_at_ms) : "—"}
                           </td>
-                          <td className="py-0! text-right">
-                            {c ? (
-                              <ActionsMenu
-                                instanceId={w.instanceId}
-                                basePath={`/controller/${encodeURIComponent(c.uuid)}`}
-                                actions={CONTROLLER_ACTIONS}
-                                subject={c.id}
-                                kind="Controller"
-                                notify={notify}
-                              />
-                            ) : null}
+                          <td className="py-0!">
+                            {/* A fixed-height box, with or without the menu, so every row is as tall. */}
+                            <div className="flex h-8 items-center justify-end">
+                              {c ? (
+                                <ActionsMenu
+                                  instanceId={w.instanceId}
+                                  basePath={`/controller/${encodeURIComponent(c.uuid)}`}
+                                  actions={CONTROLLER_ACTIONS}
+                                  subject={c.id}
+                                  kind="Controller"
+                                  notify={notify}
+                                />
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       );

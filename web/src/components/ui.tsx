@@ -384,13 +384,15 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 /** Table shell with Dragonite-like density. */
-export function Table({ children, className }: { children: ReactNode; className?: string }) {
+export function Table({ children, className, container }: { children: ReactNode; className?: string; container?: boolean }) {
   return (
     // Border on the outer box, scrolling on the inner one, so callers can pad
     // the bottom (e.g. for a control on the edge) without covering the scrollbar.
     <div className={cn("overflow-hidden rounded-xl border bg-card", className)}>
-      {/* A size container, so a row's content can match the visible width (100cqw) while the columns scroll. */}
-      <div className="@container overflow-x-auto">
+      {/* `container`: a size container, so a row's content can match the visible
+          width (100cqw) while the columns scroll. Only where asked: in Safari a page
+          whose rows reorder on every refresh inside one jumped back to the top. */}
+      <div className={cn("overflow-x-auto", container && "@container")}>
       <table className="w-full text-sm [&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:tracking-wide [&_th]:text-muted-foreground [&_th]:uppercase [&_th]:whitespace-nowrap [&_thead_tr]:border-b [&_tbody_tr]:border-b [&_tbody_tr:last-child]:border-0 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-accent/40">
         {children}
       </table>

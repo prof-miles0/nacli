@@ -102,7 +102,7 @@ export function DevicesPage() {
                 No devices connected to this instance.
               </div>
             ) : (
-            <Table>
+            <Table container>
               <thead>
                 <tr>
                   <th className="w-8" />

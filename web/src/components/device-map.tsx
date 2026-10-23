@@ -335,13 +335,14 @@ function AreaCard({
 }: {
   className?: string;
   area: { name: string; stack: string; color: string };
-  controllers: number;
+  /** Assigned in Dragonite, "active/expected". */
+  controllers: string;
   trailSince?: number;
   onClose: () => void;
 }) {
   const rows: [string, string][] = [
     ["Dragonite", area.stack],
-    ["Controllers", String(controllers)],
+    ["Controllers", controllers],
     ...(trailSince ? ([["Trails", `since ${fmt.time(trailSince)}`]] as [string, string][]) : []),
   ];
   return (
@@ -1010,6 +1011,16 @@ export function DeviceMap({
         (d) => d.controller && d.rotom && !d.controllerLeftAt && d.dragonite?.id === area.stackId && d.dragonite.area === area.name,
       )
     : [];
+  // The controllers Dragonite has assigned to the selected area (active of
+  // expected), with or without Golbat; the same query as the Areas page.
+  const stackAreas = useQuery({
+    queryKey: ["dragonite-areas", area?.stackId],
+    queryFn: () => endpoints.dragoniteAreas(area!.stackId),
+    enabled: !!area,
+    refetchInterval: 15_000,
+  });
+  const assigned = area ? stackAreas.data?.areas.find((x) => x.id === area.id)?.live : undefined;
+  const controllers = assigned ? `${assigned.active}/${assigned.expected}` : stackAreas.isLoading ? "…" : String(inArea.length);
   const areaTrails = useQueries({
     queries: inArea.map((d) => ({
       queryKey: ["golbat-trail", d.rotom!.instanceId, d.controller],
@@ -1211,7 +1222,7 @@ export function DeviceMap({
             <AreaCard
               className="hidden sm:flex"
               area={area}
-              controllers={inArea.length}
+              controllers={controllers}
               trailSince={areaSince(areaTrails)}
               onClose={() => setSelArea(undefined)}
             />
@@ -1260,7 +1271,7 @@ export function DeviceMap({
       {/* Phone: the selected area or controller under the map, so it hides nothing. */}
       {area ? (
         <div className="border-t p-3 sm:hidden">
-          <AreaCard className="flex" area={area} controllers={inArea.length} trailSince={areaSince(areaTrails)} onClose={() => setSelArea(undefined)} />
+          <AreaCard className="flex" area={area} controllers={controllers} trailSince={areaSince(areaTrails)} onClose={() => setSelArea(undefined)} />
         </div>
       ) : null}
       {selKey ? (
