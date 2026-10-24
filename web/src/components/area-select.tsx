@@ -1,5 +1,7 @@
 import { Check, ChevronDown, MapPin, Minus, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { type MenuPlace, placeMenu } from "@/lib/popover";
 import { cn } from "@/lib/utils";
 
 /** Areas look like "Zone/Subzone"; those without a slash go under "Other". */
@@ -38,29 +40,49 @@ export function AreaSelect({
   areas,
   value,
   onChange,
+  className,
 }: {
   areas: string[];
   value: string[];
   onChange: (next: string[]) => void;
+  /** For the button, e.g. "flex-1" to share a row with others. */
+  className?: string;
 }) {
-  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<MenuPlace>();
+  const open = !!pos;
   const [q, setQ] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const selected = useMemo(() => new Set(value), [value]);
 
   useEffect(() => {
     if (!open) return;
-    search.current?.focus();
-    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    // Not on phones: the keyboard would cover half the list before anyone types.
+    if (window.matchMedia("(pointer: fine)").matches) search.current?.focus();
+    const close = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menuRef.current?.contains(t)) setPos(undefined);
+    };
+    // Scrolling the page closes it, but not scrolling its own list. No closing on
+    // resize: a phone's keyboard resizes the window when the search is tapped.
+    const dismiss = (e: Event) => !menuRef.current?.contains(e.target as Node) && setPos(undefined);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPos(undefined);
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
+    window.addEventListener("scroll", dismiss, true);
     return () => {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
+      window.removeEventListener("scroll", dismiss, true);
     };
   }, [open]);
+
+  const toggleOpen = () => {
+    if (open) return setPos(undefined);
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos(placeMenu(r, Math.max(r.width, 320), 440, "right"));
+  };
 
   const needle = q.trim().toLowerCase();
   const groups = groupAreas(areas.filter((a) => !needle || a.toLowerCase().includes(needle)));
@@ -90,34 +112,36 @@ export function AreaSelect({
         : `${short(value[0])} and ${value.length - 1} more`;
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={ref}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
-        // Same shell as the range Toggle: bordered card with one inner segment.
-        className="inline-flex max-w-72 rounded-lg border bg-card p-0.5"
+        aria-label="Areas"
+        // Same shell as FilterMenu, the other dropdowns.
+        className={cn(
+          "inline-flex h-9 max-w-full min-w-0 items-center gap-2 rounded-md border border-input bg-card px-3 text-sm transition-colors hover:bg-accent sm:max-w-72",
+          open && "ring-2 ring-ring/50",
+          className,
+        )}
       >
-        <span
-          className={cn(
-            "flex min-w-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-            value.length || open ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <MapPin className="size-3.5 shrink-0" />
-          <span className="truncate">{label}</span>
-          {value.length ? (
-            <span className="rounded-full bg-foreground/10 px-1.5 text-[10px] font-semibold tabular-nums">
-              {value.length}
-            </span>
-          ) : null}
-          <ChevronDown className={cn("size-3.5 shrink-0 opacity-60 transition-transform", open && "rotate-180")} />
-        </span>
+        <MapPin className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="flex-1 truncate text-left">{label}</span>
+        {value.length ? (
+          <span className="rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground tabular-nums">{value.length}</span>
+        ) : null}
+        <ChevronDown className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
       </button>
 
-      {open ? (
-        <div className="animate-in absolute top-full right-0 z-40 mt-1.5 flex w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-lg border bg-popover shadow-2xl">
+      {pos
+        ? createPortal(
+        <div
+          ref={menuRef}
+          style={{ ...pos, maxHeight: Math.min(pos.maxHeight, 460) }}
+          className="animate-in fixed z-50 flex flex-col overflow-hidden rounded-lg border bg-popover shadow-2xl"
+        >
           <div className="flex items-center gap-2 border-b px-3">
             <Search className="size-4 shrink-0 text-muted-foreground" />
             <input
@@ -134,7 +158,7 @@ export function AreaSelect({
             ) : null}
           </div>
 
-          <div className="max-h-80 overflow-y-auto p-1" role="listbox" aria-multiselectable>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1" role="listbox" aria-multiselectable>
             {!needle ? (
               <button
                 type="button"
@@ -203,15 +227,17 @@ export function AreaSelect({
               ) : null}
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => setPos(undefined)}
                 className="rounded bg-secondary px-2 py-1 font-medium text-foreground hover:bg-secondary/80"
               >
                 Done
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

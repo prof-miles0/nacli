@@ -16,8 +16,8 @@ import { actionEffect, actionText, BUILTIN_GROUPS, KIND_LABEL, timings, windowTe
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
 import { Switch } from "./dragonite-areas";
+import { useChosenStack } from "@/lib/stack-choice";
 
-const STACK_KEY = "nacli.scheduler.stack";
 const VIEW_KEY = "nacli.scheduler.view";
 
 type View = "schedules" | "groups" | "runs";
@@ -90,7 +90,7 @@ export function DragoniteSchedulerPage() {
   const { data: app } = useAppInfo();
   const color = useInstanceColor();
   const stacks = (app?.dragonite ?? []).filter((d) => d.accounts);
-  const [chosen, setChosen] = useState(() => recall(STACK_KEY));
+  const [chosen, choose] = useChosenStack();
   const schedules = useQueries({
     queries: stacks.map((d) => ({ queryKey: ["scheduler-schedules", d.id], queryFn: () => endpoints.scheduler.schedules(d.id), refetchInterval: 30_000 })),
   });
@@ -124,10 +124,7 @@ export function DragoniteSchedulerPage() {
             label="Stack"
             tabs={tabs}
             value={current.id}
-            onChange={(id) => {
-              setChosen(id);
-              remember(STACK_KEY, id);
-            }}
+            onChange={choose}
           />
         ) : null
       }

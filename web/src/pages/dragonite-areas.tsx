@@ -17,6 +17,7 @@ import { Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/
 import { ApiError, endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
+import { useChosenStack } from "@/lib/stack-choice";
 
 /** Running at full strength, short of workers, idle, or switched off. */
 function areaState(a: DragoniteArea): { tone: StatusTone; label: string; detail?: string } {
@@ -140,30 +141,14 @@ export function WorkersTable({ workers, color }: { workers: DragoniteLiveWorker[
 
 
 
-const STACK_KEY = "nacli.areas.stack";
-
 export function DragoniteAreasPage() {
   const { data: app } = useAppInfo();
   const withApi = (app?.dragonite ?? []).filter((d) => d.accounts);
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  // One stack at a time, the last one picked (kept per browser).
-  const [chosen, setChosen] = useState<string | undefined>(() => {
-    try {
-      return localStorage.getItem(STACK_KEY) ?? undefined;
-    } catch {
-      return undefined;
-    }
-  });
+  // One stack at a time: the one picked last on any page, else the first.
+  const [chosen, choose] = useChosenStack();
   const current = withApi.find((d) => d.id === chosen) ?? withApi[0];
-  const choose = (id: string) => {
-    setChosen(id);
-    try {
-      localStorage.setItem(STACK_KEY, id);
-    } catch {
-      // Not remembered; the choice still applies now.
-    }
-  };
 
   if (!app) return <Spinner className="mx-auto mt-20" />;
   if (!withApi.length || !current) {

@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { GolbatPanelData } from "@shared/types";
 import { ChartCard } from "@/components/charts";
 import { PanelChart } from "@/components/vm-panel";
-import { Toggle } from "@/components/table-tools";
+import { RangeMenu } from "@/components/filter-menu";
 import { AreaSelect } from "@/components/area-select";
 import { Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
@@ -52,9 +52,9 @@ export function GolbatMetricsPage() {
 
   return (
     <div className="animate-in flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <AreaSelect areas={meta.data.areas} value={areas} onChange={setAreas} />
-        <Toggle value={range} onChange={setRange} options={ranges} />
+      <div className="flex items-center gap-2 sm:justify-end">
+        <AreaSelect areas={meta.data.areas} value={areas} onChange={setAreas} className="flex-1 sm:flex-none" />
+        <RangeMenu value={range} onChange={setRange} options={ranges} className="flex-1 sm:flex-none" />
       </div>
 
       {ROWS.map((row) => {

@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { Activity } from "lucide-react";
 import { useState } from "react";
 import { endpoints } from "@/lib/api";
 import { fmt, SERIES } from "@/lib/utils";
 import { ChartCard, type Series, TimeChart } from "./charts";
-import { Toggle } from "./table-tools";
+import { FilterMenu, RangeMenu } from "./filter-menu";
 import { Spinner } from "./ui";
 
 const RANGES = [
@@ -52,11 +53,18 @@ function DeviceSeriesSection({
   const rangeMs = fixedRange ?? Number(range);
   const controls =
     metrics.length > 1 || !fixedRange ? (
-      <div className="flex flex-wrap gap-2">
+      <div className="flex w-full gap-2 sm:w-auto">
         {metrics.length > 1 ? (
-          <Toggle value={metric} onChange={(v) => setMetric(v as DeviceMetric)} options={metrics} />
+          <FilterMenu
+            value={metric}
+            onChange={(v) => setMetric(v as DeviceMetric)}
+            options={metrics}
+            label="Metric"
+            icon={Activity}
+            className="flex-1 sm:flex-none"
+          />
         ) : null}
-        {fixedRange ? null : <Toggle value={range} onChange={setRange} options={RANGES} />}
+        {fixedRange ? null : <RangeMenu value={range} onChange={setRange} options={RANGES} className="flex-1 sm:flex-none" />}
       </div>
     ) : undefined;
   const q = useQuery({

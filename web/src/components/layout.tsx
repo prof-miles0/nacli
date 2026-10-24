@@ -333,6 +333,10 @@ export function Layout({ children }: { children: ReactNode }) {
           </h1>
           <UserMenu />
         </header>
+        {/* Filled by FolderTabs while its tabs are scrolled out of view (TabsBar). No height of
+            its own: the bar floats over the page, so showing it never moves the content (which
+            would bring the tabs back into view and hide it again). */}
+        <div id="tabs-bar" className="sticky top-16 z-30 h-0" />
         <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-16 md:px-6">
           <AlertsBar />
           {children}

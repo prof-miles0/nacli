@@ -178,6 +178,17 @@
   animation: fade-in-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* The stack bar comes out from under the header, the way the page is scrolling. */
+@keyframes slide-from-header {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+}
+.slide-from-header {
+  animation: slide-from-header 0.2s ease-out both;
+}
+
 /* Device popup on the Dashboard map, in the panel's own colours (both themes). */
 .device-popup .maplibregl-popup-content {
   background: var(--popover);

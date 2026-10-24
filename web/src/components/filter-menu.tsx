@@ -1,6 +1,7 @@
-import { Check, ChevronDown, ListFilter, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, Clock, ListFilter, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { type MenuPlace, placeMenu } from "@/lib/popover";
 import { cn, fmt } from "@/lib/utils";
 
 export interface FilterOption {
@@ -40,7 +41,7 @@ export function FilterMenu({
   /** For the button, e.g. "flex-1" to share a row with others. */
   className?: string;
 }) {
-  const [pos, setPos] = useState<{ top: number; left: number; width: number }>();
+  const [pos, setPos] = useState<MenuPlace>();
   const ref = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const open = !!pos;
@@ -73,8 +74,7 @@ export function FilterMenu({
     if (open) return setPos(undefined);
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
-    const width = Math.max(r.width, 224);
-    setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)), width });
+    setPos(placeMenu(r, Math.max(r.width, 224), (options.length + (allLabel !== undefined ? 1 : 0)) * 44 + 16));
   };
   const pick = (v: string) => {
     setPos(undefined);
@@ -136,8 +136,8 @@ export function FilterMenu({
               ref={menuRef}
               role="listbox"
               aria-label={label}
-              style={{ top: pos.top, left: pos.left, width: pos.width }}
-              className="animate-in fixed z-50 flex max-h-80 flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-lg border bg-popover p-1 shadow-xl"
+              style={{ ...pos, maxHeight: Math.min(pos.maxHeight, 320) }}
+              className="animate-in fixed z-50 flex flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-lg border bg-popover p-1 shadow-xl"
             >
               {allLabel !== undefined ? (
                 <>
@@ -151,5 +151,39 @@ export function FilterMenu({
           )
         : null}
     </>
+  );
+}
+
+const UNIT: Record<string, [string, string]> = { m: ["minute", "minutes"], h: ["hour", "hours"], d: ["day", "days"] };
+
+/** "15m" → "Last 15 minutes", "1h" → "Last hour". */
+export function rangeLabel(short: string): string {
+  const m = /^(\d+)([mhd])$/.exec(short);
+  if (!m) return short;
+  const [one, many] = UNIT[m[2]];
+  return m[1] === "1" ? `Last ${one}` : `Last ${m[1]} ${many}`;
+}
+
+/** A chart page's time range, as a dropdown. Options keep their short labels ("6h"). */
+export function RangeMenu({
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  className?: string;
+}) {
+  return (
+    <FilterMenu
+      value={value}
+      onChange={onChange}
+      options={options.map((o) => ({ value: o.value, label: rangeLabel(o.label) }))}
+      label="Time range"
+      icon={Clock}
+      className={className}
+    />
   );
 }

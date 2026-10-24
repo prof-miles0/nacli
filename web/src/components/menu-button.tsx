@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
+import { type MenuPlace, placeMenu } from "@/lib/popover";
 
 export interface MenuItem {
   key: string;
@@ -37,7 +38,7 @@ export function MenuButton({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; right: number }>();
+  const [pos, setPos] = useState<MenuPlace>();
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -65,9 +66,7 @@ export function MenuButton({
     if (open) return setOpen(false);
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
-    const height = items.length * 46 + 44;
-    const below = r.bottom + 4 + height <= window.innerHeight - 8;
-    setPos({ top: below ? r.bottom + 4 : Math.max(8, r.top - 4 - height), right: window.innerWidth - r.right });
+    setPos(placeMenu(r, 256, items.length * 46 + 44, "right"));
     setOpen(true);
   };
 
@@ -88,8 +87,8 @@ export function MenuButton({
             <div
               ref={menuRef}
               role="menu"
-              style={{ top: pos.top, right: pos.right }}
-              className="animate-in fixed z-50 w-64 rounded-lg border bg-popover p-1 text-left shadow-xl"
+              style={pos}
+              className="animate-in fixed z-50 overflow-y-auto overscroll-contain rounded-lg border bg-popover p-1 text-left shadow-xl"
             >
               <div className="truncate border-b px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">
                 <span className="font-medium tracking-wide uppercase">{kind}</span> · {subject}

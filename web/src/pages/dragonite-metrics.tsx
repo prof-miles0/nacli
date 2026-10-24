@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { DragoniteSummary, VmPanelData } from "@shared/types";
 import { AreaSelect } from "@/components/area-select";
 import { ChartCard } from "@/components/charts";
-import { Toggle } from "@/components/table-tools";
+import { RangeMenu } from "@/components/filter-menu";
 import { Spinner } from "@/components/ui";
 import { PanelChart } from "@/components/vm-panel";
 import { endpoints } from "@/lib/api";
@@ -12,6 +12,7 @@ import { fmt } from "@/lib/utils";
 import { type FolderTab, FolderPanel, FolderTabs } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { REJECTED_NOISE_PER_HOUR } from "@/components/charts";
+import { useChosenStack } from "@/lib/stack-choice";
 
 const RANGES = [
   { value: String(3_600_000), label: "1h" },
@@ -20,8 +21,6 @@ const RANGES = [
   { value: String(7 * 86_400_000), label: "7d" },
   { value: String(30 * 86_400_000), label: "30d" },
 ];
-
-const STACK_KEY = "nacli.metrics.stack";
 
 /** The open tab's last hour, as in the Dashboard: summed (or weighted) over the stacks shown. */
 function StackFigures({ rows }: { rows: DragoniteSummary["instances"] }) {
@@ -73,22 +72,8 @@ export function DragoniteMetricsPage() {
   const { data: app } = useAppInfo();
   const dragonites = app?.dragonite ?? [];
   const [chosenRange, setRange] = useState(RANGES[2].value);
-  // "" = every Dragonite added together (the "All" tab); remembered per browser.
-  const [instance, setInstanceRaw] = useState<string>(() => {
-    try {
-      return localStorage.getItem(STACK_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
-  const setInstance = (id: string) => {
-    setInstanceRaw(id);
-    try {
-      localStorage.setItem(STACK_KEY, id);
-    } catch {
-      // Not remembered; the choice still applies now.
-    }
-  };
+  // "" = every Dragonite added together (the "All" tab); the stack picked on any page.
+  const [instance, setInstance] = useChosenStack();
   const [areas, setAreas] = useState<string[]>([]);
   const instances = instance && dragonites.some((d) => d.id === instance) ? [instance] : [];
   // How far back the charts shown go: 30 days from Zapdos, only
@@ -153,9 +138,9 @@ export function DragoniteMetricsPage() {
             <StackFigures rows={picked} />
           </FolderPanel>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <AreaSelect areas={stackAreas} value={pickedAreas} onChange={setAreas} />
-          <Toggle value={range} onChange={setRange} options={ranges} />
+        <div className="flex items-center gap-2 sm:justify-end">
+          <AreaSelect areas={stackAreas} value={pickedAreas} onChange={setAreas} className="flex-1 sm:flex-none" />
+          <RangeMenu value={range} onChange={setRange} options={ranges} className="flex-1 sm:flex-none" />
         </div>
       </div>
 

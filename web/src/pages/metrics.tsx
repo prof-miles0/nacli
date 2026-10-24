@@ -11,7 +11,7 @@ import {
   TimeChart,
 } from "@/components/charts";
 import { DeviceMemorySection, DeviceWorkersSection } from "@/components/device-charts";
-import { Toggle } from "@/components/table-tools";
+import { RangeMenu } from "@/components/filter-menu";
 import { Card, Dot, HoverCard, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor, useInstances } from "@/lib/state";
@@ -158,7 +158,7 @@ export function MetricsPage() {
         ) : (
           <p className="text-sm text-muted-foreground">History kept in memory by the panel since it started.</p>
         )}
-        <Toggle value={range} onChange={setRange} options={fromVm ? [...RANGES, ...LONG_RANGES] : RANGES} />
+        <RangeMenu value={range} onChange={setRange} options={fromVm ? [...RANGES, ...LONG_RANGES] : RANGES} className="w-full sm:w-auto" />
       </div>
       <CapacitySection
         instances={withData}

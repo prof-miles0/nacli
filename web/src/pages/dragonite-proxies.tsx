@@ -13,8 +13,8 @@ import { AddChoice, Button, Card, HoverCard, Input, Label, Modal, Spinner, Table
 import { endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
+import { useChosenStack } from "@/lib/stack-choice";
 
-const STACK_KEY = "nacli.proxies.stack";
 
 type State = "good" | "failing" | "off" | "unknown";
 
@@ -60,21 +60,7 @@ export function DragoniteProxiesPage() {
   const color = useInstanceColor();
   const qc = useQueryClient();
   const stacks = (app?.dragonite ?? []).filter((d) => d.accounts);
-  const [tab, setTabRaw] = useState<string>(() => {
-    try {
-      return localStorage.getItem(STACK_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  });
-  const setTab = (id: string) => {
-    setTabRaw(id);
-    try {
-      localStorage.setItem(STACK_KEY, id);
-    } catch {
-      // Not remembered; the choice still applies now.
-    }
-  };
+  const [tab, setTab] = useChosenStack();
   const [search, setSearch] = useState("");
   // One state only ("" = every proxy), as the row shows it (overallState).
   const [filter, setFilter] = useState("");

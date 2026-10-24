@@ -15,11 +15,11 @@ import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
 import { LiveBar, WorkersTable } from "./dragonite-areas";
 import { SCOUT_STATE, type ScoutState, scoutState } from "@/lib/scout";
+import { useChosenStack } from "@/lib/stack-choice";
 
 // MapLibre is heavy: loaded only when a stack has scout jobs to show.
 const ScoutMap = lazy(() => import("@/components/scout-map").then((m) => ({ default: m.ScoutMap })));
 
-const STACK_KEY = "nacli.modes.stack";
 
 /** How each type looks: Dragonite's three unbound modes. */
 const TYPES: Record<UnboundModeType, { label: string; icon: typeof Swords; color: string; hint: string }> = {
@@ -63,21 +63,7 @@ export function DragoniteModesPage() {
   const { data: app } = useAppInfo();
   const color = useInstanceColor();
   const stacks = (app?.dragonite ?? []).filter((d) => d.accounts);
-  const [chosen, setChosen] = useState<string | undefined>(() => {
-    try {
-      return localStorage.getItem(STACK_KEY) ?? undefined;
-    } catch {
-      return undefined;
-    }
-  });
-  const choose = (id: string) => {
-    setChosen(id);
-    try {
-      localStorage.setItem(STACK_KEY, id);
-    } catch {
-      // Not remembered; the choice still applies now.
-    }
-  };
+  const [chosen, choose] = useChosenStack();
   const queries = useQueries({
     queries: stacks.map((d) => ({ queryKey: ["dragonite-modes", d.id], queryFn: () => endpoints.unboundModes(d.id), refetchInterval: 15_000 })),
   });
