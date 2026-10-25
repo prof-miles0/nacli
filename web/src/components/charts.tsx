@@ -1,6 +1,8 @@
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ComposedChart,
   Line,
@@ -109,6 +111,9 @@ export function TimeChart({
   stacked,
   integer,
   gaps,
+  max,
+  linear,
+  bars,
 }: {
   data: Record<string, number>[];
   series: Series[];
@@ -120,6 +125,12 @@ export function TimeChart({
   integer?: boolean;
   /** Leave missing points as gaps instead of joining across them. */
   gaps?: boolean;
+  /** A fixed top for the left axis, e.g. 100 for shares that add up to 100%. */
+  max?: number;
+  /** Straight segments between points instead of smoothed curves. */
+  linear?: boolean;
+  /** With `stacked`: stacked bars in the areas' colours (an even, translucent fill and a line of its colour on top). */
+  bars?: boolean;
 }) {
   // Unique per chart: gradient ids live in the page-wide SVG id space.
   const gid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -163,6 +174,8 @@ export function TimeChart({
     <>
       <YAxis
         yAxisId="left"
+        domain={max === undefined ? undefined : [0, max]}
+        allowDataOverflow={max !== undefined}
         width={widthFor(leftSeries, axisFormat, !!stacked)}
         allowDecimals={!integer}
         tickFormatter={(v) => axisFormat(v)}
@@ -189,18 +202,56 @@ export function TimeChart({
     />
   );
 
+  const gradients = (
+    <defs>
+      {series.map((s, i) => (
+        <linearGradient key={s.key} id={`${gid}-${i}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={s.color} stopOpacity={0.45} />
+          <stop offset="100%" stopColor={s.color} stopOpacity={0.06} />
+        </linearGradient>
+      ))}
+    </defs>
+  );
+
+  if (stacked && bars) {
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart {...common} barCategoryGap={1}>
+          {grid}
+          {/* Bars need a category axis: one slot per point. */}
+          <XAxis dataKey="t" tickFormatter={(t) => timeTick(t, data[data.length - 1].t - data[0].t)} minTickGap={48} {...axisProps} />
+          {yAxis}
+          <Tooltip content={<ChartTooltip format={format} series={series} />} cursor={{ fill: "var(--muted-foreground)", fillOpacity: 0.1 }} isAnimationActive={false} />
+          {series.map((s) => (
+            <Bar
+              key={s.key}
+              dataKey={s.key}
+              name={s.name}
+              stackId="1"
+              yAxisId="left"
+              isAnimationActive={false}
+              shape={(p: unknown) => {
+                const { x, y, width, height: h } = p as { x: number; y: number; width: number; height: number };
+                if (!h || h < 0) return <g />;
+                return (
+                  <g>
+                    <rect x={x} y={y} width={width} height={h} fill={s.color} fillOpacity={0.3} />
+                    <line x1={x} x2={x + width} y1={y} y2={y} stroke={s.color} strokeWidth={2} />
+                  </g>
+                );
+              }}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       {stacked ? (
         <AreaChart {...common}>
-          <defs>
-            {series.map((s, i) => (
-              <linearGradient key={s.key} id={`${gid}-${i}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={s.color} stopOpacity={0.45} />
-                <stop offset="100%" stopColor={s.color} stopOpacity={0.06} />
-              </linearGradient>
-            ))}
-          </defs>
+          {gradients}
           {grid}
           {xAxis}
           {yAxis}
@@ -212,7 +263,7 @@ export function TimeChart({
               name={s.name}
               stackId="1"
               yAxisId="left"
-              type="monotone"
+              type={linear ? "linear" : "monotone"}
               stroke={s.color}
               strokeWidth={2}
               fill={`url(#${gid}-${i})`}
@@ -237,7 +288,7 @@ export function TimeChart({
                 dataKey={s.key}
                 name={s.name}
                 yAxisId={s.axis === "right" ? "right" : "left"}
-                type="monotone"
+                type={linear ? "linear" : "monotone"}
                 stroke={s.color}
                 strokeWidth={1.5}
                 strokeDasharray="4 3"
@@ -253,7 +304,7 @@ export function TimeChart({
               dataKey={s.key}
               name={s.name}
               yAxisId={s.axis === "right" ? "right" : "left"}
-              type="monotone"
+              type={linear ? "linear" : "monotone"}
               stroke={s.color}
               strokeWidth={s.axis === "right" ? 1.5 : 2}
               strokeDasharray={s.axis === "right" ? "4 3" : undefined}

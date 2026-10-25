@@ -52,6 +52,13 @@ export interface ZapdosConfig {
   };
 }
 
+export interface DatabaseConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+}
+
 export interface AppConfig {
   path: string;
   title: string;
@@ -80,7 +87,11 @@ export interface AppConfig {
     api?: { url: string; headers: Record<string, string> };
     /** stats_poll_interval: how often the area statistics are taken and kept for 24 h (unset: no history). */
     statsPollIntervalMs?: number;
+    /** Its database's name on the [database] server (unset: no database pages). */
+    database?: string;
   };
+  /** The MariaDB server of the stack ([database]); each part names its own database on it. */
+  database?: DatabaseConfig;
   /** Basemap for the Dashboard map ([map]); sent to the browser, which draws it. */
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
   /** Dragonite section (charts from Zapdos), one per [[stack]] with [stack.dragonite]. */
@@ -213,7 +224,8 @@ export function loadConfig(path: string): AppConfig {
     historyRetentionMs: parseDuration(server.history_retention, 24 * 3_600_000),
     stateFile: server.state_file === undefined ? resolve("data/state.json.gz") : str(server.state_file).trim() && resolve(str(server.state_file).trim()),
     zapdos: vm,
-    golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm) : undefined,
+    golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm, !!raw.database) : undefined,
+    database: raw.database ? parseDatabase(raw.database as Table) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
     dragonite: parseDragonite(stacks, instances),
     users,
@@ -278,7 +290,17 @@ function atLeast(key: string, ms: number, min: number, label: string) {
   return min;
 }
 
-function parseGolbat(g: Table, vm?: ZapdosConfig) {
+function parseDatabase(d: Table): DatabaseConfig {
+  const host = str(d.host).trim();
+  if (!host) throw new Error("[database]: missing host");
+  const port = d.port === undefined ? 3306 : Number(d.port);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error("[database] port must be a number like 3306");
+  const user = str(d.username).trim();
+  if (!user) throw new Error("[database]: missing username");
+  return { host, port, user, password: str(d.password) };
+}
+
+function parseGolbat(g: Table, vm?: ZapdosConfig, withDatabase = false) {
   const url = str(g.url).trim().replace(/\/+$/, "");
   if (url && !/^https?:\/\//.test(url)) throw new Error("[golbat] url must start with http:// or https://");
   const headers: Record<string, string> = {};
@@ -291,7 +313,15 @@ function parseGolbat(g: Table, vm?: ZapdosConfig) {
   const every = parseDuration(g.stats_poll_interval, 0);
   const statsPollIntervalMs = every && atLeast("[golbat] stats_poll_interval", every, 5 * 60_000, "5m");
   if (statsPollIntervalMs && !url) throw new Error("[golbat] stats_poll_interval needs url");
-  return { zapdosInstance, selector, api: url ? { url, headers } : undefined, statsPollIntervalMs: statsPollIntervalMs || undefined };
+  const database = str(g.database).trim() || undefined;
+  if (database && !withDatabase) throw new Error("[golbat] database needs a [database] section with the server");
+  return {
+    zapdosInstance,
+    selector,
+    api: url ? { url, headers } : undefined,
+    statsPollIntervalMs: statsPollIntervalMs || undefined,
+    database,
+  };
 }
 
 function parseVm(vm: Table | undefined): ZapdosConfig | undefined {

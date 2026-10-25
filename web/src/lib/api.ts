@@ -1,6 +1,11 @@
 import type {
+  AreaQuests,
   AreaStatsHistory,
   AreaStatsResponse,
+  EncounterHistory,
+  SpawnpointDeleteRequest,
+  SpawnpointMap,
+  SpawnpointOverview,
   AccountImportResult,
   AccountOwner,
   AccountCounts,
@@ -99,6 +104,18 @@ export const endpoints = {
     return api<GolbatPanelData>(`/golbat/panel/${encodeURIComponent(id)}?${q}`);
   },
   golbatSummary: () => api<GolbatSummary>("/golbat/summary"),
+  golbatDb: () => api<{ configured: boolean; ok?: boolean; ms?: number; error?: string }>("/golbat/db"),
+  spawnpointOverview: () => api<SpawnpointOverview>("/golbat/spawnpoints"),
+  spawnpointTable: () => api<{ rows: number }>("/golbat/spawnpoint-table"),
+  /** The whole spawnpoint table as a .sql.gz file: a plain link, the browser saves it as it streams. */
+  spawnpointBackupUrl: "/api/golbat/spawnpoint-backup",
+  /** Counts (dryRun) or deletes spawnpoints from Golbat's database. */
+  deleteSpawnpoints: (body: SpawnpointDeleteRequest) =>
+    api<{ count?: number; deleted?: number }>("/golbat/spawnpoints/delete", { method: "POST", body: JSON.stringify(body) }),
+  /** Verified encounters of Golbat's whole map ("world"), one of its areas, or one fence of it. */
+  encounterHistory: (rangeMs: number, area: string, fence?: string) =>
+    api<EncounterHistory>(`/golbat/encounter-history?${new URLSearchParams({ range: String(rangeMs), area, ...(fence ? { fence } : {}) })}`),
+  spawnpointMap: (stack: string, area: number) => api<SpawnpointMap>(`/golbat/spawnpoints/${encodeURIComponent(stack)}/${area}`),
   golbatDevices: () => api<MapDevice[]>("/golbat/devices"),
   golbatAreaStats: () => api<AreaStatsResponse>("/golbat/area-stats"),
   /** The last 24 h of the totals, or of one area ("stack:areaId"). */
@@ -142,6 +159,8 @@ export const endpoints = {
       `/dragonite/${encodeURIComponent(id)}/quests/${action}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  /** Quests Golbat has in each area of the stack, by area id. */
+  areaQuests: (id: string) => api<AreaQuests>(`/dragonite/${encodeURIComponent(id)}/quest-status`),
   areaFull: (id: string, area: number) => api<Record<string, unknown>>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`),
   areaSpawnpoints: (id: string, area: number) =>
     api<{ points: { lat: number; lon: number; verified: boolean }[]; partial: boolean }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/spawnpoints`),

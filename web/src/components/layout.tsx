@@ -6,12 +6,15 @@ import {
   BriefcaseBusiness,
   ChartLine,
   Cpu,
+  Database,
   LayoutDashboard,
   Map as MapIcon,
+  MapPinned,
   Network,
   PanelLeft,
   Server,
   Smartphone,
+  Timer,
   Users,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -68,6 +71,8 @@ const NAV: {
   {
     group: "Golbat",
     items: [
+      { to: "/golbat/spawnpoints", label: "Spawnpoints", icon: MapPinned, when: (a) => a.golbatSpawnpoints },
+      { to: "/golbat/encounters", label: "Encounters", icon: Timer, when: (a) => a.golbatDb },
       { to: "/golbat/stats", label: "Statistics", icon: ChartColumnBig, when: (a) => a.golbatStats },
       { to: "/golbat/metrics", label: "Metrics", icon: ChartLine, when: (a) => a.golbat },
     ],
@@ -179,12 +184,15 @@ function DragoniteHealth() {
 
 /** Pill next to the Golbat heading: green while its metrics keep arriving. */
 function GolbatHealth() {
-  const { data } = useQuery({ queryKey: ["golbat-summary"], queryFn: endpoints.golbatSummary, refetchInterval: 60_000 });
-  if (!data) return null;
+  const { data: app } = useAppInfo();
+  const { data } = useQuery({ queryKey: ["golbat-summary"], queryFn: endpoints.golbatSummary, refetchInterval: 60_000, enabled: !!app?.golbat });
+  if (!app?.golbat || !data) return null;
   // Zapdos scrapes every few seconds; two minutes without data means Golbat is down.
   const ok = data.lastSeenS != null && data.lastSeenS < 120;
   return (
+    // inline-flex: aligned by their boxes, not by a text baseline that differs between them.
     <HoverCard
+      className="inline-flex"
       content={
         ok ? (
           <span>Golbat is sending metrics · last data {fmt.ago(Date.now() - (data.lastSeenS ?? 0) * 1000)}</span>
@@ -204,6 +212,41 @@ function GolbatHealth() {
       >
         <span className={cn("size-1.5 rounded-full", ok ? "bg-green-500" : "animate-pulse bg-red-500")} />
         {ok ? "OK" : "Down"}
+      </span>
+    </HoverCard>
+  );
+}
+
+/**
+ * Pill of its own beside it, when Golbat's database is set ([database] +
+ * [golbat] database): green while Nacli can read it, red with the reason.
+ */
+function GolbatDbHealth() {
+  const { data: app } = useAppInfo();
+  const { data } = useQuery({ queryKey: ["golbat-db"], queryFn: endpoints.golbatDb, refetchInterval: 30_000, enabled: !!app?.golbatDb });
+  if (!app?.golbatDb || !data?.configured) return null;
+  const ok = !!data.ok;
+  return (
+    // inline-flex: aligned by their boxes, not by a text baseline that differs between them.
+    <HoverCard
+      className="inline-flex"
+      content={
+        ok ? (
+          <span>Golbat's database can be read · {data.ms} ms</span>
+        ) : (
+          <span className="text-red-400">No access to Golbat's database: {data.error}</span>
+        )
+      }
+    >
+      <span
+        aria-label={ok ? "Database readable" : "Database unreachable"}
+        className={cn(
+          "inline-flex h-4 items-center gap-1 rounded-full px-1.5 text-[10px] font-semibold",
+          ok ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400",
+        )}
+      >
+        <Database className={cn("size-2.5", !ok && "animate-pulse")} />
+        DB
       </span>
     </HoverCard>
   );
@@ -237,7 +280,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 {g.group}
                 {g.group === "Rotom" ? <InstanceHealth /> : null}
                 {g.group === "Dragonite" ? <DragoniteHealth /> : null}
-                {g.group === "Golbat" ? <GolbatHealth /> : null}
+                {g.group === "Golbat" ? (
+                  <>
+                    <GolbatHealth />
+                    <GolbatDbHealth />
+                  </>
+                ) : null}
               </div>
             ) : null}
             {g.items.map((item) => (

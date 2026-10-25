@@ -81,6 +81,12 @@ interface PokemonScan {
   limit_reached?: boolean;
 }
 
+/** Stops with an AR / non-AR quest in an area, of all its stops, as Dragonite's admin counts them. */
+export async function areaQuests(golbat: Golbat, geometry: Geometry, timeoutMs: number): Promise<AreaStatsCounts["quests"]> {
+  const q = await post<{ ar_quests: number; no_ar_quests: number; total: number }>(golbat, "/api/quest-status", { type: "Feature", geometry, properties: {} }, timeoutMs);
+  return { ar: q.ar_quests, noAr: q.no_ar_quests, stops: q.total };
+}
+
 /** One area's figures; `partial` when Golbat cut a list at its result limit. */
 export async function areaStats(golbat: Golbat, geometry: Geometry, timeoutMs: number): Promise<AreaStatsCounts & { partial: boolean }> {
   const box = bbox(geometry);

@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync, watch } from "node:fs";
 import { basename, dirname } from "node:path";
+import { Readable } from "node:stream";
+import type { RowDataPacket } from "mysql2/promise";
 import { serve } from "@hono/node-server";
 import { unpackArchive } from "./archive.ts";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { type Context, Hono } from "hono";
+import { compress } from "hono/compress";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type {
   DragoniteProxies,
@@ -16,7 +19,12 @@ import type {
   StackGeofences,
   AreaStats,
   AreaStatsCounts,
+  AreaQuests,
   AreaStatsResponse,
+  EncounterHistory,
+  SpawnpointDeleteRequest,
+  SpawnpointMap,
+  SpawnpointOverview,
   SystemStatus,
   ProxyEntry,
   ProxyImportResult,
@@ -108,7 +116,17 @@ import {
   setProxyEnabled,
   transferArea,
 } from "./dragonite-api.ts";
-import { areaSpawnpoints, areaStats, limited, sumStats } from "./golbat-stats.ts";
+import { areaQuests, areaSpawnpoints, areaStats, limited, sumStats } from "./golbat-stats.ts";
+import {
+  countSpawnpoints,
+  deleteSpawnpoints,
+  findSpawnpoints,
+  spawnpointBackup,
+  spawnpointRows,
+  type SpawnpointTuple,
+  spawnpointsIn,
+} from "./golbat-db.ts";
+import { closeDbPools, dbCheck, dbError, dbPool } from "./db.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
 
@@ -207,6 +225,9 @@ function reload(reason: string) {
     applyMemory();
     applyStatsHistory();
     void checkVm();
+    // A changed [database] (or none) must not answer from the old one.
+    if (!cfg.database) closeDbPools();
+    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:")) vmCache.delete(k);
     console.log(`[config] reloaded (${reason}): ${cfg.instances.length} instances, ${cfg.users.length} users`);
   } catch (e) {
     console.error(`[config] reload failed, keeping the previous configuration: ${(e as Error).message}`);
@@ -225,6 +246,9 @@ watch(dirname(cfg.path), (_, name) => {
 
 type Env = { Variables: { user: string } };
 const app = new Hono<Env>();
+// JSON answers can be large (an area's spawnpoints are hundreds of KB): gzip
+// them. Binary downloads, the already-gzipped backup and small answers are left as they are.
+app.use("/api/*", compress());
 
 function clientIp(c: Context): string {
   const fwd = c.req.header("x-forwarded-for");
@@ -287,8 +311,17 @@ app.use("/api/*", async (c, next) => {
 
 // ---------- Dashboard data ----------
 
+// Answers with the Rotom states already known and refreshes them behind,
+// instead of making every page wait for each RotomNG; only the first call
+// after start waits, when nothing is known yet.
+let appInfoServed = false;
 app.get("/api/app", async (c) => {
-  await registry.fresh();
+  const refreshed = registry.fresh();
+  if (appInfoServed) refreshed.catch(() => {});
+  else {
+    await refreshed;
+    appInfoServed = true;
+  }
   return c.json<AppInfo>({
     title: cfg.title,
     pollIntervalMs: cfg.pollIntervalMs,
@@ -311,6 +344,8 @@ app.get("/api/app", async (c) => {
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
     golbatStats: !!cfg.golbat?.api && cfg.dragonite.some((d) => d.api),
     golbatStatsHistoryMs: statsEvery,
+    golbatDb: !!golbatDb(),
+    golbatSpawnpoints: !!golbatDb() && cfg.dragonite.some((d) => d.api),
     instances: registry.list(),
   });
 });
@@ -912,6 +947,35 @@ app.get("/api/dragonite/:id/areas/:area/spawnpoints", async (c) => {
       const geometry = (g?.type === "Feature" ? g.geometry : g) as { type: "Polygon" | "MultiPolygon"; coordinates: unknown } | undefined;
       if (!geometry || (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")) return { points: [], partial: false };
       return areaSpawnpoints(golbat, geometry, 30_000);
+    });
+    return c.json(data);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/**
+ * How many of each area's Pokéstops have a quest, from Golbat (only with
+ * [golbat] url): every area of the stack, disabled ones too. Shared for two
+ * minutes; lighter than the Statistics, which ask for everything else too.
+ */
+app.get("/api/dragonite/:id/quest-status", async (c) => {
+  const golbat = cfg.golbat?.api;
+  if (!golbat) return c.json({ error: "requires url in [golbat]" }, 404);
+  const d = dragoniteWithApi(c.req.param("id"));
+  if (!d) return c.json({ error: "unknown Dragonite" }, 404);
+  try {
+    const data = await cachedVm(`golbat:quests:${d.id}`, 2 * 60_000 * 240, async () => {
+      const fences = await cachedVm(`dragonite-geofences-all:${d.id}`, 5 * 60_000 * 240, () => areaGeofences(d, cfg.requestTimeoutMs, true));
+      const out: AreaQuests = {};
+      await limited(fences, 4, async (a) => {
+        try {
+          out[a.id] = await areaQuests(golbat, a.geometry, 30_000);
+        } catch (e) {
+          out[a.id] = { error: (e as Error).message };
+        }
+      });
+      return out;
     });
     return c.json(data);
   } catch (e) {
@@ -2001,6 +2065,343 @@ async function collectAreaStats(golbat: { url: string; headers: Record<string, s
   return { checkedAt: Date.now(), areas, totals: sumStats(areas.flatMap((x) => (x.stats ? [x.stats] : []))) };
 }
 
+// ---- Golbat's database ([database] + [golbat] database) ----
+
+/** The pool for Golbat's database, when both are configured. */
+const golbatDb = () => (cfg.database && cfg.golbat?.database ? { db: cfg.database, name: cfg.golbat.database } : undefined);
+
+/** Whether Golbat's database answers: the sidebar's database mark. Checked at most every 30 s. */
+app.get("/api/golbat/db", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ configured: false });
+  // Reading the spawnpoint table, the one the Spawnpoints page needs.
+  const check = await cachedVm("golbat-db:check", 30_000 * 240, () => dbCheck(g.db, g.name, "SELECT 1 FROM spawnpoint LIMIT 1"));
+  return c.json({ configured: true, ...check });
+});
+
+/** One area's spawnpoints from Golbat's database, shared for five minutes. */
+function areaSpawnpointsDb(d: DragoniteConfig, area: { id: number; geometry: SpawnpointMap["geometry"] }) {
+  const g = golbatDb()!;
+  return cachedVm(`golbat-db:spawnpoints:${d.id}:${area.id}`, 5 * 60_000 * 240, () =>
+    spawnpointsIn(dbPool(g.db, g.name), area.geometry as Parameters<typeof spawnpointsIn>[1]),
+  );
+}
+const stackGeofences = (d: DragoniteConfig) =>
+  cachedVm(`dragonite-geofences-all:${d.id}`, 5 * 60_000 * 240, () => areaGeofences(d, cfg.requestTimeoutMs, true));
+
+/**
+ * Every area of every stack (disabled ones too) with its spawnpoint counts,
+ * and every spawnpoint in them once, for the totals and the history.
+ */
+async function collectSpawnpoints(g: NonNullable<ReturnType<typeof golbatDb>>) {
+  const stacks = cfg.dragonite.filter((d) => d.api);
+  const errors: SpawnpointOverview["errors"] = [];
+  const perStack = await Promise.all(
+    stacks.map(async (d) => {
+      try {
+        return (await stackGeofences(d)).map((a) => ({ d, a }));
+      } catch (e) {
+        errors.push({ stack: d.id, error: (e as Error).message });
+        return [];
+      }
+    }),
+  );
+  // The same area copied to several stacks (same name, same geofence) is listed
+  // once, read from an active copy when there is one.
+  const merged = new Map<string, { d: DragoniteConfig; a: (typeof perStack)[number][number]["a"]; stacks: SpawnpointOverview["areas"][number]["stacks"] }>();
+  for (const { d, a } of perStack.flat()) {
+    const key = createHash("sha1").update(JSON.stringify([a.name.trim(), a.geometry])).digest("hex");
+    const m = merged.get(key);
+    const copy = { stack: d.id, id: a.id, enabled: a.enabled };
+    if (!m) merged.set(key, { d, a, stacks: [copy] });
+    else {
+      m.stacks.push(copy);
+      if (a.enabled && !m.a.enabled) Object.assign(m, { d, a });
+    }
+  }
+  const now = Math.floor(Date.now() / 1000);
+  // The totals count each spawnpoint once: areas overlap, within a stack and across stacks.
+  const unique = new Map<string, SpawnpointTuple>();
+  const points = new Map<string, SpawnpointTuple[]>();
+  const areas = await limited([...merged.values()], 3, async ({ d, a, stacks }): Promise<SpawnpointOverview["areas"][number]> => {
+    const base = { stack: d.id, id: a.id, name: a.name, enabled: stacks.some((s) => s.enabled), stacks };
+    try {
+      const list = await areaSpawnpointsDb(d, a);
+      for (const p of list) unique.set(`${p[0]},${p[1]}`, p);
+      points.set(`${d.id}:${a.id}`, list);
+      return { ...base, counts: countSpawnpoints(list, now) };
+    } catch (e) {
+      return { ...base, error: dbError(e, g.name) };
+    }
+  });
+  const overview: SpawnpointOverview = { checkedAt: Date.now(), areas, errors, totals: countSpawnpoints([...unique.values()], now) };
+  return { overview, all: [...unique.values()], points };
+}
+const SPAWNPOINTS_KEY = "golbat-db:overview";
+const spawnpoints = (g: NonNullable<ReturnType<typeof golbatDb>>) => cachedVm(SPAWNPOINTS_KEY, 5 * 60_000 * 240, () => collectSpawnpoints(g));
+// Worked out again every 4 minutes, ahead of its 5-minute cache: a visit to the
+// Spawnpoints page then finds it ready instead of waiting for every area.
+async function warmSpawnpoints() {
+  const g = golbatDb();
+  if (!g) return;
+  try {
+    const data = await collectSpawnpoints(g);
+    vmCache.set(SPAWNPOINTS_KEY, { at: Date.now(), data: Promise.resolve(data) });
+  } catch (e) {
+    console.error(`[golbat] spawnpoints: ${(e as Error).message}`);
+  }
+}
+setTimeout(() => void warmSpawnpoints(), 5_000).unref();
+setInterval(() => void warmSpawnpoints(), 4 * 60_000).unref();
+
+app.get("/api/golbat/spawnpoints", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  return c.json<SpawnpointOverview>((await spawnpoints(g)).overview);
+});
+
+// ---- Verified encounters: Golbat's pokemon_area_stats, read as Blissey does ----
+// Golbat writes one row a minute per area and fence and keeps only a few hours.
+// Every 5 minutes (at :00, :05…) the finished 5-minute window is summed and kept
+// for 90 days: 5-minute samples for a week, hourly ones after that.
+
+const ENC_KEEP_MS = 90 * 86_400_000;
+const ENC_FINE_MS = 7 * 86_400_000;
+const ENC_STEP_S = 300;
+/** Key of an area and one of its fences in a sample. */
+const encKey = (area: string, fence: string) => `${area}\t${fence}`;
+/**
+ * The figures kept per area and fence, in this order: verified and unverified
+ * encounters, Pokémon scanned and with IV, then encounters by minutes left
+ * until despawn: under 5, 5-10 … 50-55, over 55 (Golbat's encTth columns).
+ */
+const TTH = ["encTthMax5", "encTth5to10", "encTth10to15", "encTth15to20", "encTth20to25", "encTth25to30", "encTth30to35", "encTth35to40", "encTth40to45", "encTth45to50", "encTth50to55", "encTthMin55"];
+const ENC_FIGURES = 4 + TTH.length;
+const addFigures = (a: number[] | undefined, b: number[]) => b.map((x, i) => (a?.[i] ?? 0) + x);
+// Samples saved with fewer figures (from before) are dropped: Golbat still has the last hours to read again.
+let encounterHistory: NonNullable<SavedState["encounters"]> = (saved.encounters ?? []).filter((x) =>
+  Object.values(x.areas).every((v) => v.length === ENC_FIGURES),
+);
+let encounterBusy = false;
+
+/** Merges samples older than a week into hourly ones and drops those past 90 days. */
+function compactEncounters() {
+  const now = Date.now();
+  const cutoff = Math.floor((now - ENC_FINE_MS) / 3_600_000) * 3_600_000;
+  const hourly = new Map<number, Record<string, number[]>>();
+  const recent: typeof encounterHistory = [];
+  for (const x of encounterHistory) {
+    if (x.t < now - ENC_KEEP_MS) continue;
+    if (x.t >= cutoff) {
+      recent.push(x);
+      continue;
+    }
+    const h = Math.floor(x.t / 3_600_000) * 3_600_000;
+    const acc = hourly.get(h) ?? {};
+    for (const [k, vals] of Object.entries(x.areas)) acc[k] = addFigures(acc[k], vals);
+    hourly.set(h, acc);
+  }
+  encounterHistory = [...[...hourly].sort((x, y) => x[0] - y[0]).map(([t, areas]) => ({ t, areas })), ...recent];
+}
+
+/**
+ * Reads every finished 5-minute window since the last one kept: one at a
+ * time normally, or all Golbat still has after a restart or a gap.
+ */
+async function readEncounters() {
+  const g = golbatDb();
+  if (!g || encounterBusy) return;
+  encounterBusy = true;
+  try {
+    const stop = Math.floor(Date.now() / 1000 / ENC_STEP_S) * ENC_STEP_S;
+    const last = encounterHistory.at(-1)?.t;
+    const from = last ? Math.max(last / 1000 + ENC_STEP_S, stop - ENC_FINE_MS / 1000) : stop - ENC_FINE_MS / 1000;
+    if (from >= stop) return;
+    const [rows] = await dbPool(g.db, g.name).query<RowDataPacket[]>({
+      sql:
+        "SELECT FLOOR(datetime / 300) * 300 AS p, area, fence, SUM(verifiedEnc) AS v, SUM(unverifiedEnc) AS u, SUM(totMon) AS n, SUM(ivMon) AS iv, " +
+        `${TTH.map((c) => `SUM(${c}) AS ${c}`).join(", ")} ` +
+        "FROM pokemon_area_stats WHERE datetime >= ? AND datetime < ? GROUP BY p, area, fence ORDER BY p",
+      values: [from, stop],
+      timeout: 30_000,
+    });
+    const byPeriod = new Map<number, Record<string, number[]>>();
+    for (const r of rows) {
+      const t = Number(r.p) * 1000;
+      const areas = byPeriod.get(t) ?? {};
+      areas[encKey(String(r.area), String(r.fence))] = [r.v, r.u, r.n, r.iv, ...TTH.map((c) => r[c])].map((x) => Number(x ?? 0));
+      byPeriod.set(t, areas);
+    }
+    for (const [t, areas] of [...byPeriod].sort((x, y) => x[0] - y[0])) encounterHistory.push({ t, areas });
+    compactEncounters();
+  } catch (e) {
+    console.error(`[golbat] verified encounters: ${dbError(e, g.name)}`);
+  } finally {
+    encounterBusy = false;
+  }
+}
+// Shortly after start (filling any gap), then 15 s past every 5-minute mark.
+setTimeout(() => void readEncounters(), 10_000).unref();
+setTimeout(
+  () => {
+    void readEncounters();
+    setInterval(() => void readEncounters(), ENC_STEP_S * 1000).unref();
+  },
+  ENC_STEP_S * 1000 - (Date.now() % (ENC_STEP_S * 1000)) + 15_000,
+).unref();
+
+/**
+ * Encounters with and without a verified despawn time, and Pokémon with and
+ * without IV, over `range`: for Golbat's whole map ("world"), one of its
+ * areas, or one fence of an area.
+ */
+app.get("/api/golbat/encounter-history", (c) => {
+  if (!golbatDb()) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  const rangeMs = Math.min(Math.max(Number(c.req.query("range")) || 86_400_000, 3_600_000), ENC_KEEP_MS);
+  const area = c.req.query("area") || "world";
+  const fence = c.req.query("fence") || undefined;
+  const from = Date.now() - rangeMs;
+  // About 240 points whatever the range, never finer than the samples.
+  const step = Math.max(rangeMs >= ENC_FINE_MS ? 3_600_000 : ENC_STEP_S * 1000, Math.ceil(rangeMs / 240 / 300_000) * 300_000);
+  const buckets = new Map<number, number[]>();
+  const areas = new Map<string, Set<string>>();
+  for (const x of encounterHistory) {
+    if (x.t < from) continue;
+    for (const [k, vals] of Object.entries(x.areas)) {
+      const [a, f] = k.split("\t");
+      if (!areas.has(a)) areas.set(a, new Set());
+      areas.get(a)!.add(f);
+      if (a !== area || (fence && f !== fence)) continue;
+      const b = Math.floor(x.t / step) * step;
+      buckets.set(b, addFigures(buckets.get(b), vals));
+    }
+  }
+  return c.json<EncounterHistory>({
+    areas: [...areas]
+      .filter(([a]) => a !== "unmatched")
+      .map(([a, fences]) => ({ area: a, fences: [...fences].sort((x, y) => x.localeCompare(y)) }))
+      .sort((x, y) => (x.area === "world" ? -1 : y.area === "world" ? 1 : x.area.localeCompare(y.area))),
+    points: [...buckets]
+      .sort((x, y) => x[0] - y[0])
+      .map(([t, [verified, unverified, pokemon, iv, ...tth]]) => ({ t, verified, unverified, pokemon, iv, tth })),
+    since: encounterHistory[0]?.t,
+  });
+});
+
+/**
+ * Deletes spawnpoints from Golbat's database by filter, or only counts them
+ * (dryRun). A real delete must name the count its preview showed: if the
+ * table changed since, it refuses instead of deleting something else.
+ */
+app.post("/api/golbat/spawnpoints/delete", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as Partial<SpawnpointDeleteRequest>;
+  const where = body.where;
+  const despawn = body.despawn ?? "any";
+  const days = body.olderThanDays === undefined || body.olderThanDays === null ? undefined : Number(body.olderThanDays);
+  if (!where || !["area", "areas", "outside"].includes(where)) return c.json({ error: "where: area, areas or outside" }, 400);
+  if (!["any", "known", "unknown"].includes(despawn)) return c.json({ error: "despawn: any, known or unknown" }, 400);
+  if (days !== undefined && (!Number.isFinite(days) || days < 1 || days > 3650)) return c.json({ error: "olderThanDays: 1 to 3650" }, 400);
+  try {
+    const { overview } = await spawnpoints(g);
+    let geometries: Parameters<typeof findSpawnpoints>[1]["geometries"];
+    let label: string;
+    if (where === "area") {
+      const a = overview.areas.find((x) => x.stacks.some((s) => `${s.stack}:${s.id}` === body.area));
+      if (!a) return c.json({ error: "unknown area" }, 404);
+      const d = dragoniteWithApi(a.stack)!;
+      const fence = (await stackGeofences(d)).find((x) => x.id === a.id);
+      if (!fence) return c.json({ error: "this area has no geofence" }, 404);
+      geometries = [fence.geometry as (typeof geometries)[number]];
+      label = `area ${a.name}`;
+    } else {
+      // Every area with a geofence, in every stack (disabled ones too).
+      const all = (await Promise.all(cfg.dragonite.filter((d) => d.api).map((d) => stackGeofences(d).catch(() => [])))).flat();
+      geometries = all.map((x) => x.geometry as (typeof geometries)[number]);
+      if (!geometries.length) return c.json({ error: "no area has a geofence" }, 404);
+      label = where === "areas" ? "every area" : "outside every area";
+    }
+    const filter = {
+      where: where === "outside" ? ("outside" as const) : ("inside" as const),
+      geometries,
+      seenBefore: days ? Math.floor(Date.now() / 1000) - days * 86_400 : undefined,
+      despawn,
+    };
+    const ids = await findSpawnpoints(dbPool(g.db, g.name), filter);
+    if (body.dryRun) return c.json({ count: ids.length });
+    if (body.expect !== ids.length) {
+      return c.json({ error: `${ids.length} spawnpoints match now, not ${body.expect}: check the preview again`, count: ids.length }, 409);
+    }
+    const deleted = await deleteSpawnpoints(dbPool(g.db, g.name), ids);
+    console.log(
+      `[golbat] ${c.get("user")} deletes ${deleted} spawnpoints: ${label}` +
+        `${days ? `, last seen over ${days} days ago` : ""}${despawn !== "any" ? `, despawn ${despawn}` : ""}`,
+    );
+    // Every count and map from the database is out of date now.
+    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:")) vmCache.delete(k);
+    return c.json({ deleted });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "ER_TABLEACCESS_DENIED_ERROR") {
+      return c.json({ error: "the [database] user may not delete from spawnpoint (needs DELETE on it)" }, 403);
+    }
+    return c.json({ error: code ? dbError(e, g.name) : (e as Error).message }, 502);
+  }
+});
+
+/** How many rows Golbat's spawnpoint table has (the backup tool's figure). */
+app.get("/api/golbat/spawnpoint-table", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  try {
+    return c.json({ rows: await cachedVm("golbat-db:rows", 60_000 * 240, () => spawnpointRows(dbPool(g.db, g.name))) });
+  } catch (e) {
+    return c.json({ error: dbError(e, g.name) }, 502);
+  }
+});
+
+/** The whole spawnpoint table as a gzipped SQL file, streamed to the browser. Only reads. */
+app.get("/api/golbat/spawnpoint-backup", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  try {
+    const { rows, stream } = await spawnpointBackup(dbPool(g.db, g.name), g.name);
+    console.log(`[golbat] ${c.get("user")} downloads a backup of the spawnpoint table (${rows} rows)`);
+    const stamp = new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+    stream.on("error", (e) => console.error(`[golbat] spawnpoint backup broke off: ${e.message}`));
+    return new Response(Readable.toWeb(stream) as ReadableStream, {
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": `attachment; filename="${g.name}-spawnpoint-${stamp}.sql.gz"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (e) {
+    return c.json({ error: dbError(e, g.name) }, 502);
+  }
+});
+
+/** One area's spawnpoints, for the map. */
+app.get("/api/golbat/spawnpoints/:stack/:area", async (c) => {
+  const g = golbatDb();
+  if (!g) return c.json({ error: "requires [database] and database in [golbat]" }, 404);
+  const d = dragoniteWithApi(c.req.param("stack"));
+  const id = areaId(c.req.param("area"));
+  if (!d || id === undefined) return c.json({ error: "unknown area" }, 404);
+  try {
+    const area = (await stackGeofences(d)).find((a) => a.id === id);
+    if (!area) return c.json({ error: "this area has no geofence" }, 404);
+    try {
+      return c.json<SpawnpointMap>({ checkedAt: Date.now(), geometry: area.geometry, points: await areaSpawnpointsDb(d, area) });
+    } catch (e) {
+      return c.json({ error: dbError(e, g.name) }, 502);
+    }
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
 const statsSetup = () => {
   const golbat = cfg.golbat?.api;
   const stacks = cfg.dragonite.filter((d) => d.api);
@@ -2349,7 +2750,7 @@ const server = serve({ fetch: app.fetch, hostname: cfg.host, port: cfg.port }, (
   for (const i of cfg.instances) console.log(`  · ${i.name} → ${i.url}`);
 });
 
-const state = (): SavedState => ({ savedAt: Date.now(), metrics: localMetrics.dump(), stats: statsHistory });
+const state = (): SavedState => ({ savedAt: Date.now(), metrics: localMetrics.dump(), stats: statsHistory, encounters: encounterHistory });
 setInterval(() => void saveState(cfg.stateFile, state()), 5 * 60_000).unref();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

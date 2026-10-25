@@ -216,6 +216,10 @@ export interface AppInfo {
   golbatStats: boolean;
   /** How often the statistics are kept for their 24 h history (unset: no history). */
   golbatStatsHistoryMs?: number;
+  /** [database] and [golbat] database are set: Golbat's database can be read. */
+  golbatDb: boolean;
+  /** That, plus a Dragonite API for the areas: the Spawnpoints page. */
+  golbatSpawnpoints: boolean;
   instances: InstanceInfo[];
 }
 
@@ -476,10 +480,87 @@ export interface AreaStats {
   error?: string;
 }
 
+/** Quests Golbat has in each area of a stack, by area id (Areas page). */
+export type AreaQuests = Record<number, { ar: number; noAr: number; stops: number } | { error: string }>;
+
 /** The statistics over the last 24 h: the totals, or one area. */
 export interface AreaStatsHistory {
   intervalMs: number;
   points: { t: number; stats: AreaStatsCounts }[];
+}
+
+/** Spawnpoints Golbat keeps in its database: how many, with a known despawn time, and how recently seen. */
+export interface SpawnpointCounts {
+  total: number;
+  /** With despawn_sec: Golbat has seen the exact time they despawn. */
+  known: number;
+  /** Last seen within the day, the week, the month (30 days), or before (each one excludes the previous). */
+  seen24h: number;
+  seen7d: number;
+  seen30d: number;
+  older: number;
+}
+
+/** Every stack's areas with their spawnpoints (Spawnpoints page). */
+export interface SpawnpointOverview {
+  checkedAt: number;
+  /**
+   * One entry per area; an area with the same name and geofence in several
+   * stacks is one entry listing them all in `stacks`. `stack` and `id` are the
+   * copy to read it from (an active one when there is one); `enabled` is true
+   * when it is active in any of them.
+   */
+  areas: {
+    stack: string;
+    id: number;
+    name: string;
+    enabled: boolean;
+    stacks: { stack: string; id: number; enabled: boolean }[];
+    counts?: SpawnpointCounts;
+    error?: string;
+  }[];
+  /** Stacks whose areas could not be read from Dragonite. */
+  errors: { stack: string; error: string }[];
+  /** Each spawnpoint once, though it may lie in several areas. */
+  totals: SpawnpointCounts;
+}
+
+/**
+ * Encounters with and without a verified despawn time, and Pokémon scanned
+ * and with IV, from Golbat's pokemon_area_stats (read every 5 minutes, kept
+ * 90 days), for one of Golbat's areas ("world" is all of them) or one fence.
+ */
+export interface EncounterHistory {
+  /** Golbat's areas and their fences, as its geofences name them. */
+  areas: { area: string; fences: string[] }[];
+  /**
+   * pokemon: every one scanned (totMon); iv: those with IV (ivMon); tth:
+   * encounters by minutes left until despawn, under 5, 5-10 … 50-55, over 55.
+   */
+  points: { t: number; verified: number; unverified: number; pokemon: number; iv: number; tth: number[] }[];
+  /** The oldest sample kept (none yet: undefined). */
+  since?: number;
+}
+
+/** What the Spawnpoints tool deletes: every condition given must hold. */
+export interface SpawnpointDeleteRequest {
+  /** "area": the area `area` ("stack:areaId"); "areas": inside any area; "outside": outside every area. */
+  where: "area" | "areas" | "outside";
+  area?: string;
+  /** Last seen more than this many days ago (unset: any time). */
+  olderThanDays?: number;
+  despawn: "any" | "known" | "unknown";
+  /** Only count them. */
+  dryRun?: boolean;
+  /** When deleting: the count the preview showed; a different one now refuses. */
+  expect?: number;
+}
+
+/** One area's spawnpoints for the map: [lat, lon, despawn second of the hour or -1, last seen unix s]. */
+export interface SpawnpointMap {
+  checkedAt: number;
+  geometry: { type: "Polygon" | "MultiPolygon"; coordinates: unknown };
+  points: [number, number, number, number][];
 }
 
 export interface AreaStatsResponse {

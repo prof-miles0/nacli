@@ -522,7 +522,7 @@ export interface Koji {
 }
 
 /** The admin's Kōji buttons for each mode's route. */
-const KOJI_OPTIONS: Record<KojiMode, { bootstrap: boolean; label: string; icon: LucideIcon }[]> = {
+export const KOJI_OPTIONS: Record<KojiMode, { bootstrap: boolean; label: string; icon: LucideIcon }[]> = {
   pokemon: [
     { bootstrap: false, label: "Get 70m route", icon: WandSparkles },
     { bootstrap: true, label: "Get 70m bootstrap", icon: Grid2x2 },
@@ -643,7 +643,22 @@ function Coords({
  * The admin's Kōji confirmation: Dragonite asks Kōji for the route and stores
  * it straight away, replacing the saved one (Save is not needed).
  */
-function KojiModal({ mode, option, points, run, onClose }: { mode: KojiMode; option: { bootstrap: boolean; label: string }; points: number; run: () => Promise<number>; onClose: () => void }) {
+export function KojiModal({
+  mode,
+  option,
+  points,
+  run,
+  onClose,
+  inForm = true,
+}: {
+  mode: KojiMode;
+  option: { bootstrap: boolean; label: string };
+  points: number;
+  run: () => Promise<number>;
+  onClose: () => void;
+  /** Asked from the area editor: unsaved geofence changes do not count yet. */
+  inForm?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const go = async () => {
@@ -682,9 +697,11 @@ function KojiModal({ mode, option, points, run, onClose }: { mode: KojiMode; opt
           Dragonite asks Kōji for the {option.bootstrap ? "bootstrap " : ""}route and <b>saves it right away</b>, replacing the stored {MODE_NAME[mode]} route
           {points ? ` (${fmt.int(points)} points)` : ""}.
         </p>
-        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Kōji works from the saved geofence: save geofence changes first. Other unsaved changes stay in the form.
-        </p>
+        {inForm ? (
+          <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            Kōji works from the saved geofence: save geofence changes first. Other unsaved changes stay in the form.
+          </p>
+        ) : null}
         {error ? <p className="text-red-300">{error}</p> : null}
       </div>
     </Modal>

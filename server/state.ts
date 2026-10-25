@@ -16,6 +16,12 @@ export interface SavedState {
   metrics: Record<string, SavedInstance>;
   /** The Statistics history ([golbat] stats_poll_interval). */
   stats: { t: number; totals: AreaStatsCounts; areas: Record<string, AreaStatsCounts> }[];
+  /**
+   * From Golbat's pokemon_area_stats, by "area\tfence" (5 min, hourly after a week):
+   * verified and unverified encounters, all Pokémon and those with IV, and the
+   * 12 buckets of minutes left until despawn.
+   */
+  encounters?: { t: number; areas: Record<string, number[]> }[];
 }
 
 /** What was saved, or nothing when there is no file (or it cannot be read). */
@@ -32,7 +38,7 @@ export function loadState(file: string): Partial<SavedState> {
   }
 }
 
-const empty = (state: SavedState) => !Object.keys(state.metrics).length && !state.stats.length;
+const empty = (state: SavedState) => !Object.keys(state.metrics).length && !state.stats.length && !state.encounters?.length;
 let lastError: string | undefined;
 let saving = false;
 

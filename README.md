@@ -89,6 +89,17 @@ the server; the browser only ever talks to Nacli.
 
 - **Statistics** per Dragonite area: quests, Pokémon, invasions, raids, lures and Max battles,
   with their last 24 h when `stats_poll_interval` is set.
+- **Spawnpoints** from Golbat's database: every spawnpoint in each Dragonite area on a map,
+  coloured by whether its despawn time is known or when it was last seen, or as a density map.
+  The share of encounters with a verified despawn time and of Pokémon with IV, from Golbat's `pokemon_area_stats`:
+  read every 5 minutes, as Blissey does, and kept 90 days in `state_file` (hourly after a
+  week), for all of Golbat's areas, one of them or one of its fences. With it, Blissey's
+  "Spawnpoint type" (30 or 60 min spawns, by the time left at the encounter) and the minutes
+  left in each, as stacked bars.
+  Its tools back up the whole spawnpoint table (a `.sql.gz` that restores the missing rows
+  and leaves the rest), and delete spawnpoints by filter (an area, every area or outside
+  them all; last seen over N days ago; despawn known or not), after a preview of how many
+  match and typing that number to confirm.
 - Golbat's charts, from Zapdos or from memory.
 
 <p align="center">
@@ -236,6 +247,16 @@ public URLs and a client key. The example uses CARTO's Voyager and Dark Matter s
   draw the stored data.
 - `stats_poll_interval` (optional, needs `url`): how often the Statistics figures are taken
   to chart their last 24 h (kept in memory). Empty or missing: no history. At least `"5m"`.
+- `database` (optional, needs `[database]`): the name of Golbat's database on that server.
+  Enables the Spawnpoints page and adds a database mark to Golbat's pill in the sidebar.
+
+#### `[database]` (optional)
+
+The MariaDB server of the stack: `host`, `port` (default 3306), `username` and `password`.
+Each part names its own database on it (for now `[golbat] database`). `SELECT` on those
+databases is enough for every page; the Spawnpoints tool that deletes spawnpoints also needs
+`DELETE` on Golbat's `spawnpoint` table, and without it refuses (nothing else ever writes).
+Its address never reaches the browser.
 
 #### `[zapdos]` (optional)
 

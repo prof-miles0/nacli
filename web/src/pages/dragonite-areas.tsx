@@ -1,10 +1,11 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Check, ChevronRight, CirclePlay, CircleStop, Copy, Eye, Minus, Pencil, Plus, PowerOff } from "lucide-react";
 import { Fragment, useState } from "react";
-import type { DragoniteArea, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
+import type { AreaQuests, DragoniteArea, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
 import { useNotify } from "@/components/actions";
 import { toast } from "@/components/toaster";
 import { CreateAreaModal } from "@/components/area-create";
+import { KOJI_OPTIONS, KojiModal } from "@/components/area-form";
 import { AreaEditModal, AreaViewModal } from "@/components/area-view";
 import { QuestModal, type QuestRequest } from "@/components/quest-actions";
 import { type FolderTab, FolderTabs, tabTint } from "@/components/folder-tabs";
@@ -28,13 +29,56 @@ function areaState(a: DragoniteArea): { tone: StatusTone; label: string; detail?
   return { tone: "good", label: "Running", detail: `${l.active} workers` };
 }
 
+/**
+ * How many of the area's Pokéstops Golbat has a quest for, as on Statistics:
+ * the share, a bar and, on hover, AR and non-AR of all the stops.
+ */
+function QuestsScanned({ q, inline }: { q?: AreaQuests[number]; inline?: boolean }) {
+  if (!q) return <span className="text-muted-foreground/60">…</span>;
+  if ("error" in q) return <span className="text-xs text-red-400" title={q.error}>error</span>;
+  if (!q.stops) return <span className="text-muted-foreground/60">no stops</span>;
+  const done = q.ar + q.noAr;
+  const p = (done / q.stops) * 100;
+  const color = p >= 99 ? "#22c55e" : p >= 80 ? "#f59e0b" : "#ef4444";
+  return (
+    <HoverCard
+      content={
+        <div className="flex flex-col gap-0.5 tabular-nums">
+          <span>
+            AR quests <b>{fmt.int(q.ar)}</b>
+          </span>
+          <span>
+            Non-AR quests <b>{fmt.int(q.noAr)}</b>
+          </span>
+          <span className="text-muted-foreground">Of {fmt.int(q.stops)} Pokéstops, from Golbat</span>
+        </div>
+      }
+    >
+      {inline ? (
+        // One line, as the workers bar beside it on a phone card.
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full" style={{ width: `${Math.min(100, p)}%`, background: color }} />
+          </div>
+          <span className="w-10 text-right text-xs font-semibold tabular-nums">{fmt.pct(p)}</span>
+        </div>
+      ) : (
+        <div className="flex min-w-24 flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-2 tabular-nums">
+            <span className="font-semibold">{fmt.pct(p)}</span>
+            <span className="text-[11px] whitespace-nowrap text-muted-foreground">
+              {fmt.int(done)} / {fmt.int(q.stops)}
+            </span>
+          </div>
+          <MiniProgress value={done} max={q.stops} color={color} />
+        </div>
+      )}
+    </HoverCard>
+  );
+}
+
 const Flag = ({ on }: { on: boolean }) =>
   on ? <Check className="size-4 text-green-400" /> : <Minus className="size-4 text-muted-foreground/50" />;
-
-/** Workers count, dimmed when the mode is off for the area. */
-const Count = ({ n, on }: { n: number; on: boolean }) => (
-  <span className={cn("tabular-nums", (!on || n === 0) && "text-muted-foreground/60")}>{n}</span>
-);
 
 /** Live workers vs. what the area asks for. */
 export function LiveBar({ l }: { l?: DragoniteLiveGroup }) {
@@ -66,75 +110,86 @@ const MODES: Record<string, string> = {
 };
 
 export function WorkersTable({ workers, color }: { workers: DragoniteLiveWorker[]; color: (id: string) => string }) {
-  if (!workers.length) return <p className="text-xs text-muted-foreground">No workers assigned right now.</p>;
+  if (!workers.length) {
+    return <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">No workers assigned right now.</p>;
+  }
   const now = Date.now();
+  const th = "px-2.5 py-1 font-medium";
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead className="text-left text-[11px] text-muted-foreground uppercase">
-          <tr>
-            <th className="py-1 pr-4 font-medium">Worker</th>
-            <th className="py-1 pr-4 font-medium">Device</th>
-            <th className="py-1 pr-4 font-medium">Account</th>
-            <th className="py-1 pr-4 font-medium">Mode</th>
-            <th className="py-1 pr-4 font-medium">Route</th>
-            <th className="py-1 pr-4 font-medium">Last data</th>
-            <th className="py-1 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[...workers]
-            .sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }))
-            .map((w) => {
-              const stale = w.lastData && now - w.lastData * 1000 > 5 * 60_000;
-              return (
-                <tr key={`${w.name}:${w.deviceId}`} className="border-t border-border/50">
-                  <td className="py-1.5 pr-4 font-medium whitespace-nowrap">{w.name || "—"}</td>
-                  <td className="py-1.5 pr-4 whitespace-nowrap">
-                    <HoverCard content={<span className="font-mono">{w.deviceId || "no device"}</span>}>
-                      <span className="inline-flex items-center gap-1.5">
-                        {w.rotom ? <span className="size-2 rounded-full" style={{ background: color(w.rotom.rotomId) }} /> : null}
-                        {w.rotom?.device ?? (w.deviceId ? <span className="text-muted-foreground">unknown</span> : "—")}
-                      </span>
-                    </HoverCard>
-                  </td>
-                  <td className="py-1.5 pr-4 font-mono">{w.account || "—"}</td>
-                  <td className="py-1.5 pr-4 whitespace-nowrap">{MODES[w.mode] ?? (w.mode || "—")}</td>
-                  <td className="py-1.5 pr-4">
-                    {w.task && w.task.total ? (
-                      <HoverCard
-                        content={
-                          <span className="tabular-nums">
-                            {w.task.name}: point {w.task.pos} of {w.task.part} in this leg ({w.task.total} on the route) ·{" "}
-                            {fmt.duration(w.task.seconds * 1000)} on the route
-                          </span>
-                        }
-                      >
-                        <div className="flex min-w-24 items-center gap-2">
-                          <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-blue-500"
-                              style={{ width: `${Math.min(100, (w.task.pos / Math.max(1, w.task.part)) * 100)}%` }}
-                            />
-                          </div>
-                          <span className="tabular-nums text-muted-foreground">
-                            {w.task.pos}/{w.task.part}
-                          </span>
-                        </div>
+    <div className="overflow-hidden rounded-lg border bg-background/40">
+      <div className="flex items-center gap-2 border-b px-2.5 py-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        Workers now
+        <span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums normal-case">{workers.length}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-left text-[10px] tracking-wide text-muted-foreground/80 uppercase">
+            <tr>
+              <th className={th}>Worker</th>
+              <th className={th}>Device</th>
+              <th className={th}>Account</th>
+              <th className={th}>Mode</th>
+              <th className={th}>Route</th>
+              <th className={th}>Last data</th>
+              <th className={th}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...workers]
+              .sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }))
+              .map((w) => {
+                const stale = w.lastData && now - w.lastData * 1000 > 5 * 60_000;
+                return (
+                  <tr key={`${w.name}:${w.deviceId}`} className="border-t border-border/40 transition-colors hover:bg-foreground/5">
+                    <td className="px-2.5 py-1 font-medium whitespace-nowrap">{w.name || "—"}</td>
+                    <td className="px-2.5 py-1 whitespace-nowrap">
+                      <HoverCard content={<span className="font-mono">{w.deviceId || "no device"}</span>}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {w.rotom ? <span className="size-2 rounded-full" style={{ background: color(w.rotom.rotomId) }} /> : null}
+                          {w.rotom?.device ?? (w.deviceId ? <span className="text-muted-foreground">unknown</span> : "—")}
+                        </span>
                       </HoverCard>
-                    ) : (
-                      <span className="text-muted-foreground">{w.task?.name ?? "—"}</span>
-                    )}
-                  </td>
-                  <td className={cn("py-1.5 pr-4 whitespace-nowrap tabular-nums", stale ? "text-amber-400" : "text-muted-foreground")}>
-                    {w.lastData ? fmt.ago(w.lastData * 1000) : "—"}
-                  </td>
-                  <td className="py-1.5 whitespace-nowrap text-muted-foreground">{w.status || "—"}</td>
-                </tr>
-              );
-            })}
-        </tbody>
-      </table>
+                    </td>
+                    <td className="px-2.5 py-1 font-mono text-[11px] text-muted-foreground">{w.account || "—"}</td>
+                    <td className="px-2.5 py-1 whitespace-nowrap">{MODES[w.mode] ?? (w.mode || "—")}</td>
+                    <td className="px-2.5 py-1">
+                      {w.task && w.task.total ? (
+                        <HoverCard
+                          content={
+                            <span className="tabular-nums">
+                              {w.task.name}: point {w.task.pos} of {w.task.part} in this leg ({w.task.total} on the route) ·{" "}
+                              {fmt.duration(w.task.seconds * 1000)} on the route
+                            </span>
+                          }
+                        >
+                          <div className="flex min-w-24 items-center gap-2">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full bg-blue-500"
+                                style={{ width: `${Math.min(100, (w.task.pos / Math.max(1, w.task.part)) * 100)}%` }}
+                              />
+                            </div>
+                            <span className="tabular-nums text-muted-foreground">
+                              {w.task.pos}/{w.task.part}
+                            </span>
+                          </div>
+                        </HoverCard>
+                      ) : (
+                        <span className="text-muted-foreground">{w.task?.name ?? "—"}</span>
+                      )}
+                    </td>
+                    <td className={cn("px-2.5 py-1 whitespace-nowrap tabular-nums", stale ? "text-amber-400" : "text-muted-foreground")}>
+                      {w.lastData ? fmt.ago(w.lastData * 1000) : "—"}
+                    </td>
+                    <td className="px-2.5 py-1 whitespace-nowrap">
+                      {w.status ? <span className="rounded bg-muted/70 px-1.5 py-px text-[10px] text-muted-foreground">{w.status}</span> : <span className="text-muted-foreground">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -338,15 +393,18 @@ function StackAreas({
       name: (a) => a.name,
       enabled: (a) => (a.enabled ? 0 : 1),
       live: (a) => a.live?.active ?? -1,
-      pokemon: (a) => a.pokemon.workers,
-      fort: (a) => a.fort.workers,
-      rare: (a) => a.rare.workers,
-      quest: (a) => a.quest.workers,
     },
     "name",
   );
   const stackColor = stack.rotom ? color(stack.rotom) : "var(--muted-foreground)";
   const refresh = () => qc.invalidateQueries({ queryKey: ["dragonite-areas", stack.id] });
+  // Golbat's quests per area, when [golbat] has its url.
+  const { data: app } = useAppInfo();
+  const withQuests = !!app?.golbatMap;
+  const quests = useQuery({ queryKey: ["area-quests", stack.id], queryFn: () => endpoints.areaQuests(stack.id), enabled: withQuests, refetchInterval: 2 * 60_000 });
+  // Whether this Dragonite has a Kōji, for the route buttons (the same check as the area editor).
+  const kojiOn = useQuery({ queryKey: ["dragonite-koji", stack.id], queryFn: () => endpoints.kojiAvailable(stack.id), staleTime: 60_000 });
+  const koji = !!kojiOn.data?.available;
 
   const all = q.data?.areas ?? [];
   const on = all.filter((a) => a.enabled);
@@ -368,12 +426,6 @@ function StackAreas({
       {list.map((a) => {
         const st = areaState(a);
         const open = expanded.has(a.id);
-        const modes = [
-          ["Pokémon", a.pokemon],
-          ["Forts", a.fort],
-          ["Rare", a.rare],
-          ["Quests", a.quest],
-        ] as const;
         return (
           <div key={a.id} className="flex flex-col gap-2 px-3 py-2.5">
             <div className="flex items-center gap-2">
@@ -392,18 +444,30 @@ function StackAreas({
               />
               {menu(a)}
             </div>
-            {a.enabled ? <LiveBar l={a.live} /> : null}
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-              {modes.map(([label, m]) => (
-                <span key={label} className={cn(m.enabled && m.workers > 0 && "text-foreground")}>
-                  {label} <b className="tabular-nums">{m.workers}</b>
-                </span>
-              ))}
-              {a.quest.enabled ? <span>hours {a.quest.hours.length ? a.quest.hours.join(", ") : "all"}</span> : null}
-            </div>
+            {/* The same two figures as the table, one under the other with their names; the modes are inside. */}
+            {a.enabled || withQuests ? (
+              <div className="flex flex-col gap-1">
+                {a.enabled ? (
+                  <div className="flex items-center gap-3">
+                    <span className="w-14 shrink-0 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Workers</span>
+                    <div className="min-w-0 flex-1">
+                      <LiveBar l={a.live} />
+                    </div>
+                  </div>
+                ) : null}
+                {withQuests ? (
+                  <div className="flex items-center gap-3">
+                    <span className="w-14 shrink-0 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Quests</span>
+                    <div className="min-w-0 flex-1">
+                      <QuestsScanned q={quests.data?.[a.id]} inline />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {open ? (
               <div className="rounded-lg bg-muted/30 p-2">
-                <AreaDetail a={a} color={color} />
+                <AreaDetail a={a} color={color} stack={stack} koji={koji} />
               </div>
             ) : null}
           </div>
@@ -429,18 +493,14 @@ function StackAreas({
             {header("name", "Area")}
             {header("enabled", "Enabled")}
             {header("live", "Workers now")}
-            {header("pokemon", "Pokémon")}
-            {header("fort", "Forts")}
-            {header("rare", "Rare")}
-            {header("quest", "Quests")}
-            <th>Quest hours</th>
+            {withQuests ? <th>Quests scanned</th> : null}
             <th className="w-10" />
           </tr>
         </thead>
         <tbody>
           {list.length === 0 ? (
             <tr>
-              <td colSpan={10} className="py-8 text-center text-muted-foreground">
+              <td colSpan={withQuests ? 6 : 5} className="py-8 text-center text-muted-foreground">
                 {empty}
               </td>
             </tr>
@@ -471,21 +531,11 @@ function StackAreas({
                   <td>
                     <LiveBar l={a.enabled ? a.live : undefined} />
                   </td>
-                  <td>
-                    <Count n={a.pokemon.workers} on={a.pokemon.enabled} />
-                  </td>
-                  <td>
-                    <Count n={a.fort.workers} on={a.fort.enabled} />
-                  </td>
-                  <td>
-                    <Count n={a.rare.workers} on={a.rare.enabled} />
-                  </td>
-                  <td>
-                    <Count n={a.quest.workers} on={a.quest.enabled} />
-                  </td>
-                  <td className="whitespace-nowrap text-muted-foreground tabular-nums">
-                    {a.quest.enabled ? (a.quest.hours.length ? a.quest.hours.join(", ") : "all") : "—"}
-                  </td>
+                  {withQuests ? (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <QuestsScanned q={quests.data?.[a.id]} />
+                    </td>
+                  ) : null}
                   <td onClick={(e) => e.stopPropagation()} className="text-right">
                     {menu(a)}
                   </td>
@@ -493,9 +543,9 @@ function StackAreas({
                 {open ? (
                   <tr className="bg-muted/20 hover:bg-muted/20!">
                     {/* Full width: no empty chevron column on the left; width 0 so its tables do not widen this one. */}
-                    <td colSpan={10} className="px-3! pb-4!">
+                    <td colSpan={withQuests ? 6 : 5} className="px-3! pb-4!">
                       <div className="w-0 min-w-full">
-                        <AreaDetail a={a} color={color} />
+                        <AreaDetail a={a} color={color} stack={stack} koji={koji} />
                       </div>
                     </td>
                   </tr>
@@ -784,33 +834,125 @@ export function Switch({
   );
 }
 
-function AreaDetail({ a, color }: { a: DragoniteArea; color: (id: string) => string }) {
-  const on = (b: boolean) => (b ? "yes" : "no");
+/** A yes/no setting of a mode, as a small chip: lit when on. */
+function Opt({ on, children }: { on: boolean; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
-        <Field k="Pokémon route" v={`${fmt.int(a.pokemon.routePoints)} points`} />
-        <Field k="Scout · invasions" v={`${on(a.pokemon.scout)} · ${on(a.pokemon.invasion)}`} />
-        <Field k="Quest route" v={`${fmt.int(a.quest.routePoints)} points`} />
-        <Field k="Time zone" v={a.timezone || "—"} />
-        <Field k="Forts: raid priority" v={on(a.fort.prioRaid)} />
-        <Field k="Forts: showcase · invasions" v={`${on(a.fort.showcase)} · ${on(a.fort.invasion)}`} />
-        <Field k="Rare (per 10,000)" v={fmt.int(a.rare.permyriad)} />
-        <Field k="ID" v={String(a.id)} />
+    <span
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded px-1 py-px text-[10px] leading-4 whitespace-nowrap",
+        on ? "bg-green-500/10 text-green-400" : "bg-muted/60 text-muted-foreground/70",
+      )}
+    >
+      {on ? <Check className="size-2.5" strokeWidth={3} /> : <Minus className="size-2.5" strokeWidth={3} />}
+      {children}
+    </span>
+  );
+}
+
+/**
+ * Kōji's 70 m Pokémon route of an area, or its bootstrap (over the whole
+ * geofence): the area editor's icons and its confirmation, as only an icon
+ * here with its name on hover. Dragonite saves the new route at once.
+ */
+function KojiButton({ stack, area, bootstrap }: { stack: DragoniteInfo; area: DragoniteArea; bootstrap: boolean }) {
+  const qc = useQueryClient();
+  const [asking, setAsking] = useState(false);
+  const option = KOJI_OPTIONS.pokemon.find((o) => o.bootstrap === bootstrap)!;
+  const run = async () => {
+    const r = await endpoints.kojiRoute(stack.id, area.id, "pokemon", bootstrap);
+    qc.invalidateQueries({ queryKey: ["dragonite-areas", stack.id] });
+    qc.invalidateQueries({ queryKey: ["dragonite-area-full", stack.id, area.id] });
+    return r.route.length;
+  };
+  return (
+    <>
+      {/* As the area editor's: violet on hover, and the same card. */}
+      <HoverCard
+        className="inline-flex"
+        content={
+          <span className="flex flex-col gap-0.5">
+            <span className="flex items-center gap-1.5 font-medium">
+              <option.icon className="size-3.5 text-violet-400" />
+              {option.label}
+            </span>
+            <span className="text-muted-foreground">From Kōji · saved at once</span>
+          </span>
+        }
+      >
+        <button
+          type="button"
+          onClick={() => setAsking(true)}
+          aria-label={`${option.label} from Kōji`}
+          className="grid size-6 place-items-center rounded-md border text-muted-foreground transition-colors hover:border-violet-500/50 hover:bg-violet-500/10 hover:text-violet-300 focus-visible:text-violet-300"
+        >
+          <option.icon className="size-3.5" />
+        </button>
+      </HoverCard>
+      {asking ? <KojiModal mode="pokemon" option={option} points={area.pokemon.routePoints} run={run} onClose={() => setAsking(false)} inForm={false} /> : null}
+    </>
+  );
+}
+
+/** A mode of the area: whether it is on, its workers, and its own settings below. */
+function ModeTile({ label, m, children }: { label: string; m: { enabled: boolean; workers: number }; children?: React.ReactNode }) {
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-1 rounded-lg border bg-background/40 px-2.5 py-1.5", !m.enabled && "opacity-55")}>
+      <div className="flex items-center gap-2">
+        <span className={cn("size-1.5 shrink-0 rounded-full", m.enabled ? "bg-green-500" : "bg-muted-foreground/40")} />
+        <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{label}</span>
+        <span className="ml-auto text-sm font-semibold tabular-nums">
+          {fmt.int(m.workers)}
+          <span className="ml-1 text-[11px] font-normal text-muted-foreground">worker{m.workers === 1 ? "" : "s"}</span>
+        </span>
+      </div>
+      {children ? <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground tabular-nums">{children}</div> : null}
+    </div>
+  );
+}
+
+/** The area opened in the table: its modes, a line of facts, and its workers now. */
+function AreaDetail({ a, color, stack, koji }: { a: DragoniteArea; color: (id: string) => string; stack: DragoniteInfo; koji: boolean }) {
+  const route = (n: number) => <span className="mr-0.5">{fmt.int(n)} pts</span>;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+        <ModeTile label="Pokémon" m={a.pokemon}>
+          {route(a.pokemon.routePoints)}
+          <Opt on={a.pokemon.scout}>Scout</Opt>
+          <Opt on={a.pokemon.invasion}>Invasions</Opt>
+          {koji ? (
+            <span className="ml-auto flex gap-1">
+              <KojiButton stack={stack} area={a} bootstrap={false} />
+              <KojiButton stack={stack} area={a} bootstrap />
+            </span>
+          ) : null}
+        </ModeTile>
+        <ModeTile label="Forts" m={a.fort}>
+          <Opt on={a.fort.prioRaid}>Raid priority</Opt>
+          <Opt on={a.fort.showcase}>Showcase</Opt>
+          <Opt on={a.fort.invasion}>Invasions</Opt>
+        </ModeTile>
+        <ModeTile label="Rare" m={a.rare}>
+          <span>{fmt.int(a.rare.permyriad)} per 10,000</span>
+        </ModeTile>
+        <ModeTile label="Quests" m={a.quest}>
+          {route(a.quest.routePoints)}
+          <span className="truncate">· hours {a.quest.hours.length ? a.quest.hours.join(", ") : "all"}</span>
+        </ModeTile>
+      </div>
+      <div className="flex flex-wrap gap-x-3 px-0.5 text-[11px] text-muted-foreground">
+        <span>
+          Time zone <span className="text-foreground">{a.timezone || "—"}</span>
+        </span>
+        <span>
+          ID <span className="text-foreground tabular-nums">{a.id}</span>
+        </span>
       </div>
       <WorkersTable workers={a.live?.workers ?? []} color={color} />
     </div>
   );
 }
 
-function Field({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between gap-3 border-b border-border/50 py-1">
-      <span className="text-muted-foreground">{k}</span>
-      <span className="font-medium tabular-nums">{v}</span>
-    </div>
-  );
-}
 
 /** "Disable every area": asks first, then switches them off one by one. */
 function DisableAllModal({

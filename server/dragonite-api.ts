@@ -264,12 +264,12 @@ export async function dragoniteAreas(d: DragoniteConfig, timeoutMs: number) {
 }
 
 /** The outlines of the enabled areas (each area's GeoJSON geofence). */
-export async function areaGeofences(d: DragoniteConfig, timeoutMs: number) {
+export async function areaGeofences(d: DragoniteConfig, timeoutMs: number, withDisabled = false) {
   const { json } = await call(d, "/v2/areas/?order=asc&page=0&per_page=500&sort_by=name", timeoutMs);
   return ((json as Raw[]) ?? []).flatMap((a) => {
     const g = obj(obj(a.geofence).geometry);
-    if (!a.enabled || (g.type !== "Polygon" && g.type !== "MultiPolygon") || !Array.isArray(g.coordinates)) return [];
-    return [{ id: num(a.id), name: String(a.name ?? ""), geometry: { type: g.type, coordinates: g.coordinates } as const }];
+    if ((!a.enabled && !withDisabled) || (g.type !== "Polygon" && g.type !== "MultiPolygon") || !Array.isArray(g.coordinates)) return [];
+    return [{ id: num(a.id), name: String(a.name ?? ""), enabled: !!a.enabled, geometry: { type: g.type, coordinates: g.coordinates } as const }];
   });
 }
 
