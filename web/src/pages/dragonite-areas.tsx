@@ -33,7 +33,7 @@ function areaState(a: DragoniteArea): { tone: StatusTone; label: string; detail?
  * How many of the area's Pokéstops Golbat has a quest for, as on Statistics:
  * the share, a bar and, on hover, AR and non-AR of all the stops.
  */
-function QuestsScanned({ q, inline }: { q?: AreaQuests[number]; inline?: boolean }) {
+function QuestsScanned({ q, inline, scanning }: { q?: AreaQuests[number]; inline?: boolean; scanning?: boolean }) {
   if (!q) return <span className="text-muted-foreground/60">…</span>;
   if ("error" in q) return <span className="text-xs text-red-400" title={q.error}>error</span>;
   if (!q.stops) return <span className="text-muted-foreground/60">no stops</span>;
@@ -51,6 +51,7 @@ function QuestsScanned({ q, inline }: { q?: AreaQuests[number]; inline?: boolean
             Non-AR quests <b>{fmt.int(q.noAr)}</b>
           </span>
           <span className="text-muted-foreground">Of {fmt.int(q.stops)} Pokéstops, from Golbat</span>
+          {scanning ? <span className="text-sky-400">Quest scan running · updated every 15 s</span> : null}
         </div>
       }
     >
@@ -60,12 +61,18 @@ function QuestsScanned({ q, inline }: { q?: AreaQuests[number]; inline?: boolean
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
             <div className="h-full rounded-full" style={{ width: `${Math.min(100, p)}%`, background: color }} />
           </div>
-          <span className="w-10 text-right text-xs font-semibold tabular-nums">{fmt.pct(p)}</span>
+          <span className="inline-flex w-12 items-center justify-end gap-1 text-xs font-semibold tabular-nums">
+            {scanning ? <ScanDot /> : null}
+            {fmt.pct(p)}
+          </span>
         </div>
       ) : (
         <div className="flex min-w-24 flex-col gap-1">
           <div className="flex items-baseline justify-between gap-2 tabular-nums">
-            <span className="font-semibold">{fmt.pct(p)}</span>
+            <span className="inline-flex items-center gap-1.5 font-semibold">
+              {fmt.pct(p)}
+              {scanning ? <ScanDot /> : null}
+            </span>
             <span className="text-[11px] whitespace-nowrap text-muted-foreground">
               {fmt.int(done)} / {fmt.int(q.stops)}
             </span>
@@ -76,6 +83,14 @@ function QuestsScanned({ q, inline }: { q?: AreaQuests[number]; inline?: boolean
     </HoverCard>
   );
 }
+
+/** A quest scan is running in the area. */
+const ScanDot = () => (
+  <span className="relative flex size-2 shrink-0" aria-label="Quest scan running">
+    <span className="absolute inline-flex size-full animate-ping rounded-full bg-sky-400 opacity-60" />
+    <span className="relative inline-flex size-2 rounded-full bg-sky-400" />
+  </span>
+);
 
 const Flag = ({ on }: { on: boolean }) =>
   on ? <Check className="size-4 text-green-400" /> : <Minus className="size-4 text-muted-foreground/50" />;
@@ -401,7 +416,14 @@ function StackAreas({
   // Golbat's quests per area, when [golbat] has its url.
   const { data: app } = useAppInfo();
   const withQuests = !!app?.golbatMap;
-  const quests = useQuery({ queryKey: ["area-quests", stack.id], queryFn: () => endpoints.areaQuests(stack.id), enabled: withQuests, refetchInterval: 2 * 60_000 });
+  // Areas scanning quests right now: their share is read every 15 s, so it climbs as the scan goes.
+  const scanning = (q.data?.areas ?? []).filter((a) => a.live?.workers.some((w) => w.mode === "QuestMode")).map((a) => a.id);
+  const quests = useQuery({
+    queryKey: ["area-quests", stack.id],
+    queryFn: () => endpoints.areaQuests(stack.id, scanning),
+    enabled: withQuests,
+    refetchInterval: scanning.length ? 15_000 : 2 * 60_000,
+  });
   // Whether this Dragonite has a Kōji, for the route buttons (the same check as the area editor).
   const kojiOn = useQuery({ queryKey: ["dragonite-koji", stack.id], queryFn: () => endpoints.kojiAvailable(stack.id), staleTime: 60_000 });
   const koji = !!kojiOn.data?.available;
@@ -459,7 +481,7 @@ function StackAreas({
                   <div className="flex items-center gap-3">
                     <span className="w-14 shrink-0 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">Quests</span>
                     <div className="min-w-0 flex-1">
-                      <QuestsScanned q={quests.data?.[a.id]} inline />
+                      <QuestsScanned q={quests.data?.[a.id]} inline scanning={scanning.includes(a.id)} />
                     </div>
                   </div>
                 ) : null}
@@ -533,7 +555,7 @@ function StackAreas({
                   </td>
                   {withQuests ? (
                     <td onClick={(e) => e.stopPropagation()}>
-                      <QuestsScanned q={quests.data?.[a.id]} />
+                      <QuestsScanned q={quests.data?.[a.id]} scanning={scanning.includes(a.id)} />
                     </td>
                   ) : null}
                   <td onClick={(e) => e.stopPropagation()} className="text-right">

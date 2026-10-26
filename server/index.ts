@@ -956,28 +956,28 @@ app.get("/api/dragonite/:id/areas/:area/spawnpoints", async (c) => {
 
 /**
  * How many of each area's Pokéstops have a quest, from Golbat (only with
- * [golbat] url): every area of the stack, disabled ones too. Shared for two
- * minutes; lighter than the Statistics, which ask for everything else too.
+ * [golbat] url): every area of the stack, disabled ones too. Each area is
+ * kept two minutes, or 15 s for those in `?scanning=` (ids of the areas with
+ * quest workers now), so a running quest scan shows its progress.
  */
 app.get("/api/dragonite/:id/quest-status", async (c) => {
   const golbat = cfg.golbat?.api;
   if (!golbat) return c.json({ error: "requires url in [golbat]" }, 404);
   const d = dragoniteWithApi(c.req.param("id"));
   if (!d) return c.json({ error: "unknown Dragonite" }, 404);
+  const scanning = new Set((c.req.query("scanning") ?? "").split(",").filter(Boolean).map(Number));
   try {
-    const data = await cachedVm(`golbat:quests:${d.id}`, 2 * 60_000 * 240, async () => {
-      const fences = await cachedVm(`dragonite-geofences-all:${d.id}`, 5 * 60_000 * 240, () => areaGeofences(d, cfg.requestTimeoutMs, true));
-      const out: AreaQuests = {};
-      await limited(fences, 4, async (a) => {
-        try {
-          out[a.id] = await areaQuests(golbat, a.geometry, 30_000);
-        } catch (e) {
-          out[a.id] = { error: (e as Error).message };
-        }
-      });
-      return out;
+    const fences = await cachedVm(`dragonite-geofences-all:${d.id}`, 5 * 60_000 * 240, () => areaGeofences(d, cfg.requestTimeoutMs, true));
+    const out: AreaQuests = {};
+    await limited(fences, 4, async (a) => {
+      try {
+        const ttl = scanning.has(a.id) ? 15_000 : 2 * 60_000;
+        out[a.id] = await cachedVm(`golbat:quests:${d.id}:${a.id}`, ttl * 240, () => areaQuests(golbat, a.geometry, 30_000));
+      } catch (e) {
+        out[a.id] = { error: (e as Error).message };
+      }
     });
-    return c.json(data);
+    return c.json(out);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }

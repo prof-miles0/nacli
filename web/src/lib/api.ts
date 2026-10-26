@@ -160,7 +160,9 @@ export const endpoints = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   /** Quests Golbat has in each area of the stack, by area id. */
-  areaQuests: (id: string) => api<AreaQuests>(`/dragonite/${encodeURIComponent(id)}/quest-status`),
+  /** `scanning`: areas with quest workers now, which the server re-reads every 15 s. */
+  areaQuests: (id: string, scanning: number[] = []) =>
+    api<AreaQuests>(`/dragonite/${encodeURIComponent(id)}/quest-status${scanning.length ? `?scanning=${scanning.join(",")}` : ""}`),
   areaFull: (id: string, area: number) => api<Record<string, unknown>>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/full`),
   areaSpawnpoints: (id: string, area: number) =>
     api<{ points: { lat: number; lon: number; verified: boolean }[]; partial: boolean }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/spawnpoints`),
