@@ -540,6 +540,8 @@ export interface EncounterHistory {
   points: { t: number; verified: number; unverified: number; pokemon: number; iv: number; tth: number[] }[];
   /** The oldest sample kept (none yet: undefined). */
   since?: number;
+  /** The newest sample kept: when it is older than the range, the range shows nothing. */
+  last?: number;
 }
 
 /** What the Spawnpoints tool deletes: every condition given must hold. */

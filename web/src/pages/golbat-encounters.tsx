@@ -124,9 +124,9 @@ export function GolbatEncountersPage() {
   };
   const options = useQuery({ queryKey: ["encounter-areas"], queryFn: () => endpoints.encounterHistory(86_400_000, "world"), staleTime: 5 * 60_000 });
   const golbatAreas = options.data?.areas ?? [];
-  // A remembered area Golbat no longer has falls back to all of them.
+  // A remembered area Golbat no longer has (or none known yet) falls back to all of them.
   const known = (v: string) => golbatAreas.some((a) => a.area === v.split("\t")[0]);
-  const scope = chosen && (!golbatAreas.length || known(chosen)) ? chosen : "world";
+  const scope = chosen && known(chosen) ? chosen : "world";
   const [scopeArea, scopeFence] = scope.split("\t");
   const q = useQuery({
     queryKey: ["encounter-history", range, scope],
@@ -191,7 +191,9 @@ export function GolbatEncountersPage() {
             </div>
           ) : points.length < 2 ? (
             <p className="grid h-[130px] place-items-center px-6 text-center text-sm text-muted-foreground">
-              No encounters for this area in this period yet. Nacli reads them every 5 minutes and keeps 90 days.
+              {q.data.last && q.data.last < Date.now() - Number(range)
+                ? `Nothing in this period: the newest data is from ${fmt.time(q.data.last)}. Choose a longer range.`
+                : "No encounters for this area in this period yet. Nacli reads them every 5 minutes and keeps 90 days."}
             </p>
           ) : (
             <TimeChart data={points} series={ENCOUNTER_SERIES} format={(v) => `${fmt.dec(v)}%`} axisFormat={(v) => `${fmt.int(v)}%`} height={130} linear />

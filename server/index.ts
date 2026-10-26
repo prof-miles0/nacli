@@ -2266,12 +2266,12 @@ app.get("/api/golbat/encounter-history", (c) => {
   const buckets = new Map<number, number[]>();
   const areas = new Map<string, Set<string>>();
   for (const x of encounterHistory) {
-    if (x.t < from) continue;
     for (const [k, vals] of Object.entries(x.areas)) {
       const [a, f] = k.split("\t");
+      // Every area kept, whatever the range: the list must not empty when the range does.
       if (!areas.has(a)) areas.set(a, new Set());
       areas.get(a)!.add(f);
-      if (a !== area || (fence && f !== fence)) continue;
+      if (x.t < from || a !== area || (fence && f !== fence)) continue;
       const b = Math.floor(x.t / step) * step;
       buckets.set(b, addFigures(buckets.get(b), vals));
     }
@@ -2285,6 +2285,7 @@ app.get("/api/golbat/encounter-history", (c) => {
       .sort((x, y) => x[0] - y[0])
       .map(([t, [verified, unverified, pokemon, iv, ...tth]]) => ({ t, verified, unverified, pokemon, iv, tth })),
     since: encounterHistory[0]?.t,
+    last: encounterHistory.at(-1)?.t,
   });
 });
 
