@@ -145,7 +145,12 @@ if (saved.metrics) localMetrics.restore(saved.metrics);
 function applyMemory() {
   localMetrics.apply(cfg, {
     rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.zapdosInstance ?? ""),
-    dragonite: (id) => !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.zapdosInstance ?? ""),
+    // The "All" chart adds every Dragonite from a single source: when any of them
+    // lacks data in Zapdos, all are kept in memory too (each stack's own tab
+    // still uses Zapdos when it has its data there).
+    dragonite: (id) =>
+      cfg.dragonite.some((d) => !onVm("dragonite", d.zapdosInstance)) ||
+      !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.zapdosInstance ?? ""),
     golbat: !onVm("golbat", cfg.golbat?.zapdosInstance ?? ""),
   });
 }
@@ -480,7 +485,9 @@ function dragoniteSource(ids: string[] = []) {
 }
 
 app.get("/api/dragonite/meta", async (c) => {
-  const src = dragoniteSource();
+  // The page also works when only some stacks have a source yet (the others
+  // still starting in memory): their tabs show, and "All" waits for the rest.
+  const src = dragoniteSource() ?? cfg.dragonite.map((d) => dragoniteSource([d.id])).find(Boolean);
   if (!src) return c.json(NO_DRAGONITE, 404);
   const areas = await cachedVm(`dragonite:${src.source}:areas`, 60_000 * 240 * 5, () => dragoniteAreas(src.vm, src.all, 20_000)).catch(
     () => [] as string[],
