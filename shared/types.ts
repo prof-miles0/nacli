@@ -424,9 +424,17 @@ export interface DragoniteAccountPage {
   total: number;
   pages: number;
   rows: DragoniteAccount[];
-  /** How many of the listed accounts (before ?status=) are in each state. */
+  /** How many of the listed accounts are in each state, with every filter but ?status= applied. */
   states?: Partial<Record<AccountState, number>>;
+  /** The same for ?token= ("valid" or "none") … */
+  tokens?: Partial<Record<AccountToken, number>>;
+  /** … and for ?provider= (lowercase, e.g. "ptc"). */
+  providers?: Record<string, number>;
 }
+
+/** Whether Dragonite holds a refresh token it can still log in with (the Token column). */
+export type AccountToken = "valid" | "none";
+export const accountToken = (a: DragoniteAccount): AccountToken => (a.valid_refresh_token ? "valid" : "none");
 
 /** The one state that best describes an account, worst first (as its Status column shows). */
 export type AccountState = "banned" | "auth_banned" | "invalid" | "suspended" | "warned" | "disabled" | "in_use" | "available";

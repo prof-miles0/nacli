@@ -44,7 +44,7 @@ import type {
   Tagged,
   Worker,
 } from "../shared/types.ts";
-import { type AccountState, accountState } from "../shared/types.ts";
+import { type AccountState, type AccountToken, accountState, accountToken } from "../shared/types.ts";
 import {
   checkCredentials,
   clearFailedLogins,
@@ -986,11 +986,26 @@ app.get("/api/dragonite-accounts", async (c) => {
     if (needle) rows = rows.filter((a) => a.username.toLowerCase().includes(needle));
     // ?in_use=true|false: the accounts a worker is using now, or the rest.
     if (q("in_use") === "true" || q("in_use") === "false") rows = rows.filter((a) => a.in_use === (q("in_use") === "true"));
-    // ?status=banned|…: one state only; the counts are of every state, for the filter.
-    const states: Partial<Record<AccountState, number>> = {};
-    for (const a of rows) states[accountState(a)] = (states[accountState(a)] ?? 0) + 1;
-    const status = q("status");
-    if (status) rows = rows.filter((a) => accountState(a) === status);
+    // ?status=banned|…, ?token=valid|none, ?provider=ptc|…: one value each. Each
+    // filter's counts have the other filters applied, so they add up to what it shows.
+    const facets = {
+      status: accountState,
+      token: accountToken,
+      provider: (a: DragoniteAccount) => String(a.provider ?? "").toLowerCase(),
+    };
+    type Facet = keyof typeof facets;
+    const keys = Object.keys(facets) as Facet[];
+    const wanted = Object.fromEntries(keys.map((k) => [k, q(k) ?? ""])) as Record<Facet, string>;
+    const fits = (a: DragoniteAccount, skip?: Facet) => keys.every((k) => k === skip || !wanted[k] || facets[k](a) === wanted[k]);
+    const counts = (k: Facet) => {
+      const out: Record<string, number> = {};
+      for (const a of rows) if (fits(a, k)) out[facets[k](a)] = (out[facets[k](a)] ?? 0) + 1;
+      return out;
+    };
+    const states = counts("status") as Partial<Record<AccountState, number>>;
+    const tokens = counts("token") as Partial<Record<AccountToken, number>>;
+    const providers = counts("provider");
+    rows = rows.filter((a) => fits(a));
     const val = (a: DragoniteAccount) => (a as unknown as Record<string, unknown>)[sortBy];
     rows.sort((a, b) => {
       const x = val(a);
@@ -1005,6 +1020,8 @@ app.get("/api/dragonite-accounts", async (c) => {
       pages: Math.max(1, Math.ceil(rows.length / perPage)),
       rows: rows.slice(page * perPage, (page + 1) * perPage),
       states,
+      tokens,
+      providers,
     });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);

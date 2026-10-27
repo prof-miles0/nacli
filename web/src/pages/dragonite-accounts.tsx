@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Plus } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, LogIn, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { type AccountCounts, type AccountLevelCounts, type AccountState, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
+import { type AccountCounts, type AccountLevelCounts, type AccountState, type AccountToken, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
 import { AddAccountsModal } from "@/components/account-forms";
 import { MoveBar, MoveCountModal, movableStacks, type PickedAccount } from "@/components/account-move";
 import { FilterMenu } from "@/components/filter-menu";
@@ -286,6 +286,46 @@ function StateFilter({ value, counts, onChange }: { value: string; counts?: Part
   );
 }
 
+const TOKENS: Record<AccountToken, { label: string; color: string }> = {
+  valid: { label: "Valid token", color: "#4ade80" },
+  none: { label: "No valid token", color: "#71717a" },
+};
+
+/** Valid token or not, as the Token column shows it. */
+function TokenFilter({ value, counts, onChange }: { value: string; counts?: Partial<Record<AccountToken, number>>; onChange: (v: string) => void }) {
+  const shown = (Object.keys(TOKENS) as AccountToken[]).filter((k) => counts?.[k] || k === value);
+  if (shown.length < 2 && !value) return null;
+  return (
+    <FilterMenu
+      label="Token"
+      allLabel="Any token"
+      icon={KeyRound}
+      value={value}
+      onChange={onChange}
+      options={shown.map((k) => ({ value: k, label: TOKENS[k].label, color: TOKENS[k].color, count: counts?.[k] ?? 0 }))}
+    />
+  );
+}
+
+/** The login provider (PTC…), shown even while every account has the same one. */
+function ProviderFilter({ value, counts, onChange }: { value: string; counts?: Record<string, number>; onChange: (v: string) => void }) {
+  const shown = Object.keys(counts ?? {})
+    .filter((k) => counts?.[k] || k === value)
+    .sort();
+  if (value && !shown.includes(value)) shown.push(value);
+  if (!shown.length) return null;
+  return (
+    <FilterMenu
+      label="Provider"
+      allLabel="All providers"
+      icon={LogIn}
+      value={value}
+      onChange={onChange}
+      options={shown.map((k) => ({ value: k, label: k ? k.toUpperCase() : "None", count: counts?.[k] ?? 0 }))}
+    />
+  );
+}
+
 const SORTS = [
   { key: "username", label: "Username" },
   { key: "level", label: "Level" },
@@ -327,6 +367,8 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
   const [q, setQ] = useState("");
   // One state only ("" = all); the choices come with the server's counts.
   const [status, setStatus] = useState("");
+  const [token, setToken] = useState("");
+  const [provider, setProvider] = useState("");
   // Search as you type, but only ask Dragonite once typing pauses.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -338,8 +380,8 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
 
   const perPage = 10;
   const list = useQuery({
-    queryKey: ["accounts-all", inUse, page, sortBy, order, q, status],
-    queryFn: () => endpoints.allAccounts({ page, perPage, sortBy, order, q, inUse, status }),
+    queryKey: ["accounts-all", inUse, page, sortBy, order, q, status, token, provider],
+    queryFn: () => endpoints.allAccounts({ page, perPage, sortBy, order, q, inUse, status, token, provider }),
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   });
@@ -383,12 +425,19 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
           {title}
           {data ? <span className="text-sm font-normal text-muted-foreground tabular-nums">{fmt.int(data.total)}</span> : null}
         </h2>
-        <div className="flex w-full items-center gap-2 sm:w-auto">
-          {/* The search, then the state at its right; on phones the search fills the row. */}
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          {/* The search, then the filters at its right; on phones the search fills the row. */}
           <div className="min-w-0 flex-1 sm:flex-none">
             <SearchBox value={search} onChange={setSearch} placeholder="Search username…" />
           </div>
           <StateFilter value={status} counts={data?.states} onChange={(v) => (setStatus(v), setPage(0))} />
+          {/* Token and provider: for picking which free accounts to fix or move. */}
+          {!inUse ? (
+            <>
+              <TokenFilter value={token} counts={data?.tokens} onChange={(v) => (setToken(v), setPage(0))} />
+              <ProviderFilter value={provider} counts={data?.providers} onChange={(v) => (setProvider(v), setPage(0))} />
+            </>
+          ) : null}
         </div>
       </div>
       {picked.size ? (
@@ -600,6 +649,7 @@ export function DragoniteAccountsPage() {
   const [adding, setAdding] = useState(false);
   const [moving, setMoving] = useState(false);
   const movable = movableStacks(withApi);
+  const { colorOf } = useStackColors();
 
   if (!app) return <Spinner className="mx-auto mt-20" />;
 
@@ -620,7 +670,7 @@ export function DragoniteAccountsPage() {
         </div>
       ) : null}
       {adding ? <AddAccountsModal stacks={withApi} onClose={() => setAdding(false)} /> : null}
-      {moving ? <MoveCountModal stacks={movable} nameOf={(id) => movable.find((d) => d.id === id)?.name ?? id} onClose={() => setMoving(false)} /> : null}
+      {moving ? <MoveCountModal stacks={movable} nameOf={(id) => movable.find((d) => d.id === id)?.name ?? id} colorOf={colorOf} onClose={() => setMoving(false)} /> : null}
       {withApi.length > 1 ? <DuplicatesCard stacks={withApi} /> : null}
       <div className={cn("grid gap-4", dragonites.length > 1 && "lg:grid-cols-2")}>
         {dragonites.map((d) => (

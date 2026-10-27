@@ -258,12 +258,16 @@ export const endpoints = {
     stack?: string;
     inUse?: boolean;
     status?: string;
+    token?: string;
+    provider?: string;
   }) => {
     const q = new URLSearchParams({ page: String(p.page), per_page: String(p.perPage), sort_by: p.sortBy, order: p.order });
     if (p.q) q.set("q", p.q);
     if (p.stack) q.set("stack", p.stack);
     if (p.inUse !== undefined) q.set("in_use", String(p.inUse));
     if (p.status) q.set("status", p.status);
+    if (p.token) q.set("token", p.token);
+    if (p.provider) q.set("provider", p.provider);
     return api<DragoniteAccountPage>(`/dragonite-accounts?${q}`);
   },
   accounts: (id: string, p: { page: number; perPage: number; sortBy: string; order: "asc" | "desc"; q: string }) => {

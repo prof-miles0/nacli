@@ -2,12 +2,13 @@
 // one) or a number of available ones. The rows move from one Dragonite
 // database to the other and both Dragonites reload their accounts.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, X } from "lucide-react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, ArrowRightLeft, X } from "lucide-react";
 import { useState } from "react";
 import type { AccountMoveResult, DragoniteInfo } from "@shared/types";
+import { FilterMenu } from "@/components/filter-menu";
 import { toast } from "@/components/toaster";
-import { Button, Input, Label, Modal, Select, Spinner } from "@/components/ui";
+import { Button, Input, Label, Modal, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { fmt } from "@/lib/utils";
 
@@ -141,17 +142,35 @@ function MoveText({ from, to }: { from: string[]; to: string }) {
 }
 
 /** Move a number of available accounts: Nacli picks them, highest level first. */
-export function MoveCountModal({ stacks, nameOf, onClose }: { stacks: DragoniteInfo[]; nameOf: (id: string) => string; onClose: () => void }) {
+export function MoveCountModal({
+  stacks,
+  nameOf,
+  colorOf,
+  onClose,
+}: {
+  stacks: DragoniteInfo[];
+  nameOf: (id: string) => string;
+  colorOf: (id: string) => string;
+  onClose: () => void;
+}) {
   const [from, setFrom] = useState(stacks[0]?.id ?? "");
   const [to, setTo] = useState(stacks[1]?.id ?? "");
   const [count, setCount] = useState("");
   const { busy, run } = useMove(nameOf);
-  const available = useQuery({
-    queryKey: ["accounts-available", from],
-    queryFn: () => endpoints.allAccounts({ page: 0, perPage: 10, sortBy: "username", order: "asc", q: "", stack: from, inUse: false, status: "available" }),
-    enabled: !!from,
+  // Every stack's free accounts, so each option in the menus shows its own.
+  const available = useQueries({
+    queries: stacks.map((d) => ({
+      queryKey: ["accounts-available", d.id],
+      queryFn: () => endpoints.allAccounts({ page: 0, perPage: 1, sortBy: "username", order: "asc", q: "", stack: d.id, inUse: false, status: "available" }),
+    })),
   });
-  const max = available.data?.total ?? 0;
+  const countOf = (id: string) => available[stacks.findIndex((d) => d.id === id)]?.data?.total;
+  const loading = available[stacks.findIndex((d) => d.id === from)]?.isLoading;
+  const max = countOf(from) ?? 0;
+  const options = stacks.map((d) => ({ value: d.id, label: d.name, color: colorOf(d.id), count: countOf(d.id) }));
+  // Picking the other side's stack swaps the two.
+  const pickFrom = (v: string) => (setFrom(v), v === to && setTo(from));
+  const pickTo = (v: string) => (setTo(v), v === from && setFrom(to));
   const n = Number(count);
   const valid = from && to && from !== to && Number.isInteger(n) && n >= 1 && n <= max;
   return (
@@ -179,33 +198,30 @@ export function MoveCountModal({ stacks, nameOf, onClose }: { stacks: DragoniteI
       }
     >
       <div className="flex flex-col gap-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-2">
+          <div className="flex flex-col gap-1.5">
             <Label>From</Label>
-            <Select value={from} onChange={(e) => (setFrom(e.target.value), e.target.value === to && setTo(from))}>
-              {stacks.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className="flex flex-col gap-1.5">
+            <FilterMenu value={from} onChange={pickFrom} options={options} label="From" className="w-full" />
+          </div>
+          <button
+            type="button"
+            onClick={() => (setFrom(to), setTo(from))}
+            title="Swap"
+            aria-label="Swap from and to"
+            className="grid size-9 place-items-center rounded-full border bg-muted/40 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <ArrowRight className="size-4" />
+          </button>
+          <div className="flex flex-col gap-1.5">
             <Label>To</Label>
-            <Select value={to} onChange={(e) => (setTo(e.target.value), e.target.value === from && setFrom(to))}>
-              {stacks.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </Select>
-          </label>
+            <FilterMenu value={to} onChange={pickTo} options={options} label="To" className="w-full" />
+          </div>
         </div>
         <label className="flex flex-col gap-1.5">
           <Label>How many</Label>
           <Input type="number" min={1} max={max || undefined} inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)} className="w-40" />
           <span className="text-xs text-muted-foreground">
-            {available.isLoading ? "Counting…" : `${plural(max, "available account")} in ${nameOf(from)}`}
+            {loading ? "Counting…" : `${plural(max, "available account")} in ${nameOf(from)}`}
           </span>
         </label>
         {from && to && from !== to ? <MoveText from={[nameOf(from)]} to={nameOf(to)} /> : null}

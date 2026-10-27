@@ -53,7 +53,12 @@ export function FilterMenu({
     };
     // Scrolling the page closes it, but not scrolling its own list.
     const dismiss = (e: Event) => !menuRef.current?.contains(e.target as Node) && setPos(undefined);
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPos(undefined);
+    // Escape closes the menu only, not a modal it sits in.
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setPos(undefined);
+    };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", esc);
     window.addEventListener("scroll", dismiss, true);
