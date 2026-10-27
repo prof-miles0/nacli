@@ -45,6 +45,7 @@ import type {
   MeResponse,
   VmPanelData,
 } from "@shared/types";
+import { withPending } from "./area-pending";
 
 export class ApiError extends Error {
   constructor(
@@ -146,7 +147,7 @@ export const endpoints = {
   deleteProxy: (stack: string, id: number) =>
     api<{ ok: true }>(`/dragonite-proxies/${encodeURIComponent(stack)}/${id}`, { method: "DELETE" }),
   geofences: () => api<StackGeofences[]>("/dragonite-geofences"),
-  dragoniteAreas: (id: string) => api<DragoniteAreas>(`/dragonite/${encodeURIComponent(id)}/areas`),
+  dragoniteAreas: (id: string) => api<DragoniteAreas>(`/dragonite/${encodeURIComponent(id)}/areas`).then((r) => withPending(id, r)),
   setAreaEnabled: (id: string, area: number, on: boolean) =>
     api<{ ok: true }>(`/dragonite/${encodeURIComponent(id)}/areas/${area}/${on ? "enable" : "disable"}`, { method: "POST" }),
   createArea: (body: { stacks: string[]; enabledIn?: string; area: Record<string, unknown> }) =>

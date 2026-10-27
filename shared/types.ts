@@ -430,7 +430,8 @@ export interface DragoniteLiveWorker {
   lastData: number;
   status: string;
   /** The Rotom device running it, matched by worker id. */
-  rotom?: { rotomId: string; device: string };
+  /** Its device, found in the stack's own RotomNG: that instance, the device's name and its id there. */
+  rotom?: { rotomId: string; device: string; deviceId: string };
 }
 
 export interface DragoniteLiveGroup {

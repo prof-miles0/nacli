@@ -4,11 +4,29 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, CirclePlay, CircleStop, X } from "lucide-react";
 import { useState } from "react";
-import type { DragoniteArea, DragoniteInfo } from "@shared/types";
+import type { AreaQuests, DragoniteArea, DragoniteInfo } from "@shared/types";
 import { useStacks } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Button, Modal, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
+
+/**
+ * Areas where quests were started from here, by "stack:area", and when: their
+ * share is read every 15 s from the start, before Dragonite's workers switch
+ * to quests (which is what marks an area as scanning otherwise).
+ */
+const started = new Map<string, number>();
+
+/** Areas of a stack whose quest scan was started here in the last 5 minutes. */
+export function questsStarted(stack: string): number[] {
+  const now = Date.now();
+  const out: number[] = [];
+  for (const [k, at] of started) {
+    if (now - at > 5 * 60_000) started.delete(k);
+    else if (k.startsWith(`${stack}:`)) out.push(Number(k.slice(stack.length + 1)));
+  }
+  return out;
+}
 
 export interface QuestRequest {
   action: "start" | "stop";
@@ -46,6 +64,24 @@ export function QuestModal({
     try {
       const r = await endpoints.questAction(stack.id, action, { area: area?.id, clear: start && clear });
       setResult(r);
+      const done = area ? (r.errors[area.id] ? [] : [area.id]) : Object.keys(r.areas).filter((id) => r.areas[id]).map(Number);
+      for (const id of done) {
+        if (start) started.set(`${stack.id}:${id}`, Date.now());
+        else started.delete(`${stack.id}:${id}`);
+      }
+      // Dragonite has just cleared their quests: 0% at once, then Golbat's reads take over.
+      if (start && clear) {
+        qc.setQueryData<AreaQuests>(["area-quests", stack.id], (old) => {
+          if (!old) return old;
+          const next = { ...old };
+          for (const id of done) {
+            const q = next[id];
+            if (q && !("error" in q)) next[id] = { ...q, ar: 0, noAr: 0 };
+          }
+          return next;
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["area-quests", stack.id] });
       const failed = Object.keys(r.errors).length;
       toast({
         tone: failed ? "warning" : "success",

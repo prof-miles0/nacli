@@ -1133,6 +1133,8 @@ app.post("/api/dragonite/:id/quests/:action{start|stop}", async (c) => {
   try {
     const r = await questAction(d, area, action, clear, cfg.requestTimeoutMs);
     vmCache.delete(`dragonite-areas:${d.id}`);
+    // Golbat's quest counts change from here on: the next read asks it again.
+    for (const k of vmCache.keys()) if (k === `golbat:quests:${d.id}:${area}` || (area === "all" && k.startsWith(`golbat:quests:${d.id}:`))) vmCache.delete(k);
     console.log(
       `[dragonite] ${c.get("user")} ${action}s quests in ${area === "all" ? "every active area" : `area ${area}`} of ${d.name}` +
         `${action === "start" ? (clear ? " (clearing quests)" : " (keeping quests)") : ""}: ${r.message || "ok"}`,
@@ -1397,15 +1399,11 @@ app.get("/api/dragonite/:id/areas", async (c) => {
   const d = dragoniteWithApi(c.req.param("id"));
   if (!d) return c.json({ error: "Dragonite has no url in its [stack.dragonite]" }, 404);
   try {
-    const [data] = await Promise.all([cachedVm(`dragonite-areas:${d.id}`, 0, () => dragoniteAreaList(d, cfg.requestTimeoutMs)), registry.fresh()]);
-    // Name each worker's device as Rotom knows it (the device_id is Rotom's worker id).
-    const devices = new Map<string, { rotomId: string; device: string }>();
-    for (const s of registry.all()) {
-      for (const dev of s.status?.devices ?? []) {
-        for (const w of dev.workers ?? []) devices.set(w.id, { rotomId: s.cfg.id, device: dev.origin });
-      }
-    }
-    const tag = <T extends { deviceId: string }>(w: T) => ({ ...w, rotom: devices.get(w.deviceId) });
+    // Rotom only names the workers' devices: what is already known will do,
+    // refreshed behind, so the list never waits for the RotomNG.
+    registry.fresh().catch(() => {});
+    const data = await cachedVm(`dragonite-areas:${d.id}`, 0, () => dragoniteAreaList(d, cfg.requestTimeoutMs));
+    const tag = rotomDeviceTagger(d);
     return c.json({
       ...data,
       areas: data.areas.map((a) => (a.live ? { ...a, live: { ...a.live, workers: a.live.workers.map(tag) } } : a)),
@@ -1437,12 +1435,17 @@ app.get("/api/dragonite-geofences", async (c) => {
 
 // ---------- Dragonite unbound modes (Level, Invasion, Scout) ----------
 
-/** Names each worker's device as Rotom knows it (the device_id is Rotom's worker id). */
-function rotomDeviceTagger() {
-  const devices = new Map<string, { rotomId: string; device: string }>();
-  for (const s of registry.all()) {
+/**
+ * Names each worker's device as Rotom knows it (the device_id is Rotom's
+ * worker id), looking only in the RotomNG of the Dragonite's own [[stack]]:
+ * its controllers connect there, never to another stack's.
+ */
+function rotomDeviceTagger(d: DragoniteConfig) {
+  const devices = new Map<string, { rotomId: string; device: string; deviceId: string }>();
+  const s = d.rotom ? registry.get(d.rotom) : undefined;
+  if (s) {
     for (const dev of s.status?.devices ?? []) {
-      for (const w of dev.workers ?? []) devices.set(w.id, { rotomId: s.cfg.id, device: dev.origin });
+      for (const w of dev.workers ?? []) devices.set(w.id, { rotomId: s.cfg.id, device: dev.origin, deviceId: dev.id });
     }
   }
   return <T extends { deviceId: string }>(w: T) => ({ ...w, rotom: devices.get(w.deviceId) });
@@ -1492,8 +1495,9 @@ app.get("/api/dragonite/:id/modes", async (c) => {
   const d = dragoniteWithApi(c.req.param("id"));
   if (!d) return c.json({ error: "Dragonite has no url in its [stack.dragonite]" }, 404);
   try {
-    const [data] = await Promise.all([cachedVm(`dragonite-modes:${d.id}`, 0, () => unboundModes(d, cfg.requestTimeoutMs)), registry.fresh()]);
-    const tag = rotomDeviceTagger();
+    registry.fresh().catch(() => {});
+    const data = await cachedVm(`dragonite-modes:${d.id}`, 0, () => unboundModes(d, cfg.requestTimeoutMs));
+    const tag = rotomDeviceTagger(d);
     return c.json({ ...data, modes: data.modes.map((m) => (m.live ? { ...m, live: { ...m.live, workers: m.live.workers.map(tag) } } : m)) });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);

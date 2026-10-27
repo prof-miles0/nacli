@@ -1,13 +1,14 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Check, ChevronRight, CirclePlay, CircleStop, Copy, Eye, Minus, Pencil, Plus, PowerOff } from "lucide-react";
 import { Fragment, useState } from "react";
-import type { AreaQuests, DragoniteArea, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
+import { Link } from "react-router";
+import type { AreaQuests, DragoniteArea, DragoniteAreas, DragoniteInfo, DragoniteLiveGroup, DragoniteLiveWorker } from "@shared/types";
 import { useNotify } from "@/components/actions";
 import { toast } from "@/components/toaster";
 import { CreateAreaModal } from "@/components/area-create";
 import { KOJI_OPTIONS, KojiModal } from "@/components/area-form";
 import { AreaEditModal, AreaViewModal } from "@/components/area-view";
-import { QuestModal, type QuestRequest } from "@/components/quest-actions";
+import { QuestModal, questsStarted, type QuestRequest } from "@/components/quest-actions";
 import { type FolderTab, FolderTabs, tabTint } from "@/components/folder-tabs";
 import { HeadStat, MiniProgress } from "@/components/head-stat";
 import { MenuButton } from "@/components/menu-button";
@@ -15,6 +16,7 @@ import { useStacks } from "@/components/stack-tag";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { matches, SearchBox, useSorted } from "@/components/table-tools";
 import { Button, Card, HoverCard, Input, Label, Modal, Spinner, Table } from "@/components/ui";
+import { expectSaved } from "@/lib/area-pending";
 import { ApiError, endpoints } from "@/lib/api";
 import { useAppInfo, useInstanceColor } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
@@ -158,11 +160,27 @@ export function WorkersTable({ workers, color }: { workers: DragoniteLiveWorker[
                   <tr key={`${w.name}:${w.deviceId}`} className="border-t border-border/40 transition-colors hover:bg-foreground/5">
                     <td className="px-2.5 py-1 font-medium whitespace-nowrap">{w.name || "—"}</td>
                     <td className="px-2.5 py-1 whitespace-nowrap">
-                      <HoverCard content={<span className="font-mono">{w.deviceId || "no device"}</span>}>
-                        <span className="inline-flex items-center gap-1.5">
-                          {w.rotom ? <span className="size-2 rounded-full" style={{ background: color(w.rotom.rotomId) }} /> : null}
-                          {w.rotom?.device ?? (w.deviceId ? <span className="text-muted-foreground">unknown</span> : "—")}
-                        </span>
+                      <HoverCard
+                        content={
+                          <span className="flex flex-col gap-0.5">
+                            <span className="font-mono">{w.deviceId || "no device"}</span>
+                            {w.rotom ? <span className="text-muted-foreground">Open it in Rotom › Devices</span> : null}
+                          </span>
+                        }
+                      >
+                        {w.rotom ? (
+                          // To the device in its own stack's RotomNG.
+                          <Link
+                            to={`/devices?${new URLSearchParams({ instance: w.rotom.rotomId, device: w.rotom.deviceId, worker: w.deviceId })}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1.5 underline-offset-2 hover:underline"
+                          >
+                            <span className="size-2 rounded-full" style={{ background: color(w.rotom.rotomId) }} />
+                            {w.rotom.device}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">{w.deviceId ? "unknown" : "—"}</span>
+                        )}
                       </HoverCard>
                     </td>
                     <td className="px-2.5 py-1 font-mono text-[11px] text-muted-foreground">{w.account || "—"}</td>
@@ -329,6 +347,10 @@ function StackAreas({
     setPendingOn((p) => ({ ...p, [a.id]: next }));
     try {
       await endpoints.setAreaEnabled(stack.id, a.id, next);
+      // Its new target at once (all its workers, or none); the reload shows Dragonite taking it up.
+      qc.setQueryData<DragoniteAreas>(["dragonite-areas", stack.id], (old) =>
+        old ? { ...old, areas: old.areas.map((x) => (x.id === a.id ? expectSaved(stack.id, x, { ...x, enabled: next }) : x)) } : old,
+      );
       await qc.invalidateQueries({ queryKey: ["dragonite-areas", stack.id] });
       notify({ text: `${a.name} ${next ? "enabled" : "disabled"} on ${stack.name}` });
     } catch (e) {
@@ -398,6 +420,7 @@ function StackAreas({
   const q = useQuery({
     queryKey: ["dragonite-areas", stack.id],
     queryFn: () => endpoints.dragoniteAreas(stack.id),
+    // Every 15 s; a change shows its new target at once (see area-pending), and the bar follows Dragonite.
     refetchInterval: 15_000,
   });
   const enabledAreas = (q.data?.areas ?? []).filter((a) => a.enabled);
@@ -416,8 +439,9 @@ function StackAreas({
   // Golbat's quests per area, when [golbat] has its url.
   const { data: app } = useAppInfo();
   const withQuests = !!app?.golbatMap;
-  // Areas scanning quests right now: their share is read every 15 s, so it climbs as the scan goes.
-  const scanning = (q.data?.areas ?? []).filter((a) => a.live?.workers.some((w) => w.mode === "QuestMode")).map((a) => a.id);
+  // Areas scanning quests right now (or just started here): their share is read every 15 s, so it climbs as the scan goes.
+  const questing = (q.data?.areas ?? []).filter((a) => a.live?.workers.some((w) => w.mode === "QuestMode")).map((a) => a.id);
+  const scanning = [...new Set([...questing, ...questsStarted(stack.id)])];
   const quests = useQuery({
     queryKey: ["area-quests", stack.id],
     queryFn: () => endpoints.areaQuests(stack.id, scanning),

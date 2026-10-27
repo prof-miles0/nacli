@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import type { Device, Tagged } from "@shared/types";
 import { ActionsMenu, DEVICE_ACTIONS, useNotify } from "@/components/actions";
 import { FilterMenu } from "@/components/filter-menu";
@@ -31,6 +32,25 @@ export function DevicesPage() {
   // One state only ("" = every device).
   const [filter, setFilter] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // ?instance=<rotom>&device=<id>[&worker=<id>], from a worker's device elsewhere
+  // (e.g. Areas): that row opens, comes into view and is marked for a moment,
+  // with the worker inside it when one is given.
+  const [params] = useSearchParams();
+  const target = params.get("instance") && params.get("device") ? `${params.get("instance")}/${params.get("device")}` : undefined;
+  const targetWorker = params.get("worker") ?? undefined;
+  const [marked, setMarked] = useState<string>();
+  const targetFound = !!target && !!data?.devices.some((d) => `${d.instanceId}/${d.id}` === target);
+  useEffect(() => {
+    if (!target || !targetFound) return;
+    setExpanded((e) => new Set(e).add(target));
+    setMarked(target);
+    // After the row opens: to the worker inside it when there is one, else the device.
+    requestAnimationFrame(() =>
+      (document.getElementById(`worker-${targetWorker}`) ?? document.getElementById(`device-${target}`))?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+    const t = setTimeout(() => setMarked(undefined), 2500);
+    return () => clearTimeout(t);
+  }, [target, targetFound, targetWorker]);
   const { notify, node } = useNotify();
   const { visible } = useInstances();
 
@@ -122,7 +142,11 @@ export function DevicesPage() {
                   const st = deviceState(d);
                   return (
                     <Fragment key={key}>
-                      <tr className="cursor-pointer" onClick={() => toggle(key)}>
+                      <tr
+                        id={`device-${key}`}
+                        className={cn("cursor-pointer transition-colors duration-700", marked === key && "bg-sky-500/15")}
+                        onClick={() => toggle(key)}
+                      >
                         <td>
                           <ChevronRight className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-90")} />
                         </td>
@@ -187,7 +211,7 @@ export function DevicesPage() {
                             {/* From the row's left edge and as wide as the visible table, kept
                                 in view while its columns scroll sideways. */}
                             <div className="sticky left-3 w-[calc(100cqw-24px)]">
-                              <DeviceDetail d={d} />
+                              <DeviceDetail d={d} mark={marked === key ? targetWorker : undefined} />
                             </div>
                           </td>
                         </tr>
@@ -206,7 +230,8 @@ export function DevicesPage() {
   );
 }
 
-function DeviceDetail({ d }: { d: Device }) {
+/** A device's figures and its workers; `mark` lights one of them up for a moment. */
+function DeviceDetail({ d, mark }: { d: Device; mark?: string }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs @md:grid-cols-2 @3xl:grid-cols-4">
@@ -236,7 +261,7 @@ function DeviceDetail({ d }: { d: Device }) {
               .map((w) => {
               const c = w.session?.controller;
               return (
-                <tr key={w.id}>
+                <tr key={w.id} id={`worker-${w.id}`} className={cn("transition-colors duration-700", mark === w.id && "bg-sky-500/20")}>
                   <td>
                     <WorkerName w={w} />
                   </td>

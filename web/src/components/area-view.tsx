@@ -5,12 +5,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Save } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import type { DragoniteArea, DragoniteInfo } from "@shared/types";
+import type { DragoniteArea, DragoniteAreas, DragoniteInfo } from "@shared/types";
 import { type MapLayer, pointsOf, polygonsOf } from "@/components/area-layers";
 import { AreaForm, AreaMapView, type Draft, draftOf, type FormTab, type Koji, problems, routeText, toAreaFull } from "@/components/area-form";
 import { StackTag, useStacks } from "@/components/stack-tag";
 import { toast } from "@/components/toaster";
 import { Badge, Button, Label, Modal, Spinner } from "@/components/ui";
+import { expectSaved } from "@/lib/area-pending";
 import { endpoints } from "@/lib/api";
 import { useAppInfo } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
@@ -179,6 +180,30 @@ export function AreaViewModal({ stack, area, onClose, onEdit }: { stack: Dragoni
 }
 
 /** The admin's "Edit": every field of the area, its geofence and routes included. */
+/**
+ * The table's row for an area with the editor's values, to show while the
+ * save and the reload go on; what cannot be read from the draft stays as it was.
+ */
+function withDraft(a: DragoniteArea, d: Draft, enabled: boolean): DragoniteArea {
+  const n = (v: string, old: number) => (/^\d+$/.test(v.trim()) ? Number(v) : old);
+  let hours = a.quest.hours;
+  try {
+    const parsed = d.quest.hours.trim() ? JSON.parse(d.quest.hours) : [];
+    if (Array.isArray(parsed) && parsed.every((h) => typeof h === "number")) hours = parsed;
+  } catch {
+    // Not a list yet: the old hours stay.
+  }
+  return {
+    ...a,
+    name: d.name.trim() || a.name,
+    enabled,
+    pokemon: { ...a.pokemon, enabled: d.pokemon.enabled, workers: n(d.pokemon.workers, a.pokemon.workers), scout: d.pokemon.scout, invasion: d.pokemon.invasion },
+    quest: { ...a.quest, enabled: d.quest.enabled, workers: n(d.quest.workers, a.quest.workers), hours },
+    fort: { ...a.fort, enabled: d.fort.enabled, workers: n(d.fort.workers, a.fort.workers), prioRaid: d.fort.prioRaid, showcase: d.fort.showcase, invasion: d.fort.invasion },
+    rare: { ...a.rare, enabled: d.rare.enabled, workers: n(d.rare.workers, a.rare.workers), permyriad: n(d.rare.permyriad, a.rare.permyriad) },
+  };
+}
+
 export function AreaEditModal({ stack, area, onClose }: { stack: DragoniteInfo; area: DragoniteArea; onClose: () => void }) {
   const q = useFullArea(stack, area);
   return q.error ? (
@@ -227,6 +252,11 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
   const save = async () => {
     setBusy(true);
     setError(undefined);
+    // Show the new figures in the areas table at once; the reload confirms them,
+    // and a refused save puts the old ones back.
+    const listKey = ["dragonite-areas", stack.id];
+    const previous = qc.getQueryData<DragoniteAreas>(listKey);
+    if (previous) qc.setQueryData<DragoniteAreas>(listKey, { ...previous, areas: previous.areas.map((a) => (a.id === area.id ? expectSaved(stack.id, a, withDraft(a, d, enabled)) : a)) });
     try {
       const r = await endpoints.saveAreaFull(stack.id, area.id, toAreaFull(d, base, enabled));
       toast({ tone: "success", text: `${d.name.trim()} ${r.steps.join(" and ")}${on(stack.id)}` });
@@ -235,6 +265,7 @@ function EditForm({ stack, area, base, onClose }: { stack: DragoniteInfo; area: 
       qc.invalidateQueries({ queryKey: ["dragonite-geofences"] });
       onClose();
     } catch (e) {
+      if (previous) qc.setQueryData(listKey, previous);
       setError((e as Error).message);
     } finally {
       setBusy(false);
