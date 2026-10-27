@@ -239,6 +239,37 @@ async function checkVm() {
   applyMemory();
   // Restored histories not taken back by now belong to instances on Zapdos.
   localMetrics.forgetRestored();
+  await checkDragoniteActivity();
+}
+
+/** Dragonites (ids) whose metrics arrive but that handled no location in the last hour. */
+let dragoniteIdle = new Set<string>();
+
+/**
+ * Which Dragonites are alive yet idle: no location handled in the last hour,
+ * read where their charts come from. One Zapdos no longer receives is left to
+ * the "quiet" warning; one in memory without the series yet is not judged.
+ */
+async function checkDragoniteActivity() {
+  const idle = new Set<string>();
+  for (const d of cfg.dragonite) {
+    const src = dragoniteSource([d.id]);
+    if (!src || (src.source === "vm" && vmQuiet.has(`dragonite:${d.zapdosInstance}`))) continue;
+    try {
+      const handled = await vmScalars(src.vm, `sum(increase(dragonite_location_handled_counter{${dragoniteBase(src.all, [d.id])}}[1h]))`, undefined, 10_000);
+      const n = handled.get("");
+      if (n === undefined && src.source === "memory") continue;
+      if (!(n !== undefined && n > 0)) idle.add(d.id);
+    } catch {
+      // Not known this time: no warning either way.
+    }
+  }
+  for (const d of cfg.dragonite) {
+    if (dragoniteIdle.has(d.id) !== idle.has(d.id)) {
+      console.log(`[dragonite] ${d.name}: ${idle.has(d.id) ? "no location handled in the last hour" : "handling locations again"}`);
+    }
+  }
+  dragoniteIdle = idle;
 }
 applyMemory();
 void checkVm();
@@ -364,6 +395,7 @@ app.get("/api/app", async (c) => {
       fromVm: onVm("dragonite", zapdosInstance),
     })),
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
+    dragoniteIdle: cfg.dragonite.filter((d) => dragoniteIdle.has(d.id)).map((d) => ({ id: d.id, name: d.name })),
     zapdosQuiet: [
       ...cfg.instances.map((i) => ({ kind: "rotom" as const, name: i.name, zapdosInstance: i.zapdosInstance })),
       ...cfg.dragonite.map((d) => ({ kind: "dragonite" as const, name: d.name, zapdosInstance: d.zapdosInstance })),

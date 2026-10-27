@@ -59,6 +59,17 @@ function useAlerts(): Alert[] {
   const rotomName = (id: string) => app.instances.find((i) => i.id === id)?.name ?? id;
   const out: Alert[] = [];
 
+  // Alive, but working on nothing: no location handled for an hour.
+  for (const d of app.dragoniteIdle ?? []) {
+    out.push({
+      key: `dragonite-idle:${d.id}`,
+      level: "warning",
+      subject: `Dragonite ${d.name}`,
+      text: "has handled no locations in the last hour: check its areas, workers and accounts",
+      to: "/dragonite/areas",
+    });
+  }
+
   // Charts still come from Zapdos, but nothing new has arrived for an hour.
   for (const z of app.zapdosQuiet ?? []) {
     const label = z.kind === "rotom" ? `Rotom ${z.name}` : z.kind === "dragonite" ? `Dragonite ${z.name}` : "Golbat";

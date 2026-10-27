@@ -210,6 +210,8 @@ export interface AppInfo {
   dragonite: DragoniteInfo[];
   /** Instances whose charts come from Zapdos but that sent nothing in the last hour: Zapdos may have stopped scraping them. */
   zapdosQuiet: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string }[];
+  /** Dragonites whose metrics arrive but that handled no location in the last hour. */
+  dragoniteIdle: { id: string; name: string }[];
   /** How far back Golbat's charts go (Zapdos or memory). */
   golbatHistoryMs?: number;
   /** Golbat's API and a Dragonite API are configured: per-area statistics. */
