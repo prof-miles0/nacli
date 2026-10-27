@@ -64,7 +64,7 @@ import {
   dragoniteStats,
   sourceMatches,
 } from "./dragonite.ts";
-import { runPanel, vmScalars } from "./vmpanels.ts";
+import { runPanel, vmLabelValues, vmScalars } from "./vmpanels.ts";
 import { LOCAL_GOLBAT, LocalMetrics, localRotom } from "./local-metrics.ts";
 import { loadState, type SavedState, saveState, saveStateNow } from "./state.ts";
 import {
@@ -145,12 +145,7 @@ if (saved.metrics) localMetrics.restore(saved.metrics);
 function applyMemory() {
   localMetrics.apply(cfg, {
     rotom: (id) => !onVm("rotom", cfg.instances.find((i) => i.id === id)?.zapdosInstance ?? ""),
-    // The "All" chart adds every Dragonite from a single source: when any of them
-    // lacks data in Zapdos, all are kept in memory too (each stack's own tab
-    // still uses Zapdos when it has its data there).
-    dragonite: (id) =>
-      cfg.dragonite.some((d) => !onVm("dragonite", d.zapdosInstance)) ||
-      !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.zapdosInstance ?? ""),
+    dragonite: (id) => !onVm("dragonite", cfg.dragonite.find((d) => d.id === id)?.zapdosInstance ?? ""),
     golbat: !onVm("golbat", cfg.golbat?.zapdosInstance ?? ""),
   });
 }
@@ -160,15 +155,23 @@ const LOCAL_VM: ZapdosConfig = { url: "memory", headers: {}, instanceLabel: "ins
 // ---------- Which instances Zapdos has data for ----------
 
 type VmKind = "rotom" | "dragonite" | "golbat";
-/** A series each kind always exposes: seen in the last hour = Zapdos has that instance. */
+/**
+ * Each kind's metric names: any of them stored = Zapdos has that instance.
+ * Any, not one in particular: an idle Dragonite stops counting handled
+ * locations, yet Zapdos keeps scraping it.
+ */
 const VM_PROBE: Record<VmKind, string> = {
-  rotom: "rotom_ng_workers_connected",
-  dragonite: "dragonite_location_handled_counter",
-  golbat: "golbat_pokemon_count_new",
+  rotom: "rotom_ng_.+",
+  dragonite: "dragonite_.+",
+  golbat: "golbat_.+",
 };
 const VM_CHECK_MS = 5 * 60_000;
-/** `${kind}:${zapdos_instance}` with recent data; undefined until the first check. */
+/** How far back data in Zapdos counts: its charts' longest range. */
+const VM_HAS_DATA_MS = 30 * 86_400_000;
+/** `${kind}:${zapdos_instance}` with data in Zapdos, however old; undefined until the first check. */
 let vmReady: Set<string> | undefined;
+/** Those of them with nothing in the last hour: Zapdos may have stopped scraping them. */
+let vmQuiet = new Set<string>();
 
 /**
  * Whether an instance's charts come from Zapdos: only with
@@ -180,9 +183,15 @@ function onVm(kind: VmKind, zapdosInstance: string) {
   return vmReady ? vmReady.has(`${kind}:${zapdosInstance}`) : true;
 }
 
+/**
+ * Which instances Zapdos has data for (their charts come from there, however
+ * old the data), and which of those have sent nothing in the last hour (a
+ * warning: Zapdos may have stopped scraping them).
+ */
 async function checkVm() {
   const vm = cfg.zapdos;
   const next = new Set<string>();
+  const quiet = new Set<string>();
   if (vm) {
     const L = vm.instanceLabel;
     const wanted: Record<VmKind, string[]> = {
@@ -196,9 +205,17 @@ async function checkVm() {
       const re = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       // Rotom's queries add the global selector; the others never did.
       const extra = kind === "rotom" && vm.selector ? `,${vm.selector}` : "";
+      const match = `{__name__=~"${VM_PROBE[kind]}",${L}=~"${re}"${extra}}`;
       try {
-        const found = await vmScalars(vm, `count by (${L}) (last_over_time(${VM_PROBE[kind]}{${L}=~"${re}"${extra}}[1h]))`, L, 10_000);
-        for (const n of names) if (found.has(n)) next.add(`${kind}:${n}`);
+        const [stored, recent] = await Promise.all([
+          vmLabelValues(vm, L, match, 10_000, Math.floor((Date.now() - VM_HAS_DATA_MS) / 1000)),
+          vmScalars(vm, `count by (${L}) (last_over_time(${match}[1h]))`, L, 10_000),
+        ]);
+        for (const n of names) {
+          if (!stored.includes(n)) continue;
+          next.add(`${kind}:${n}`);
+          if (!recent.has(n)) quiet.add(`${kind}:${n}`);
+        }
       } catch (e) {
         console.error(`[zapdos] could not check ${kind} data in Zapdos, using memory: ${(e as Error).message}`);
       }
@@ -211,10 +228,14 @@ async function checkVm() {
         if (before !== next.has(k)) {
           console.log(`[zapdos] ${kind} "${n}": ${next.has(k) ? "data in Zapdos" : "no data in Zapdos, charts from memory"}`);
         }
+        if (vmQuiet.has(k) !== quiet.has(k)) {
+          console.log(`[zapdos] ${kind} "${n}": ${quiet.has(k) ? "nothing in the last hour, check that Zapdos still scrapes it" : "data arriving again"}`);
+        }
       }
     }
   }
   vmReady = next;
+  vmQuiet = quiet;
   applyMemory();
   // Restored histories not taken back by now belong to instances on Zapdos.
   localMetrics.forgetRestored();
@@ -342,11 +363,12 @@ app.get("/api/app", async (c) => {
       historyMs: dragoniteSource([id])?.maxRangeMs ?? 0,
       fromVm: onVm("dragonite", zapdosInstance),
     })),
-    dragoniteHistory: (() => {
-      const all = dragoniteSource();
-      return all ? { source: all.source === "vm" ? "zapdos" : "memory", maxRangeMs: all.maxRangeMs } : undefined;
-    })(),
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
+    zapdosQuiet: [
+      ...cfg.instances.map((i) => ({ kind: "rotom" as const, name: i.name, zapdosInstance: i.zapdosInstance })),
+      ...cfg.dragonite.map((d) => ({ kind: "dragonite" as const, name: d.name, zapdosInstance: d.zapdosInstance })),
+      ...(cfg.golbat ? [{ kind: "golbat" as const, name: "Golbat", zapdosInstance: cfg.golbat.zapdosInstance }] : []),
+    ].filter((x) => x.zapdosInstance && vmQuiet.has(`${x.kind}:${x.zapdosInstance}`)),
     golbatStats: !!cfg.golbat?.api && cfg.dragonite.some((d) => d.api),
     golbatStatsHistoryMs: statsEvery,
     golbatDb: !!golbatDb(),
@@ -485,8 +507,8 @@ function dragoniteSource(ids: string[] = []) {
 }
 
 app.get("/api/dragonite/meta", async (c) => {
-  // The page also works when only some stacks have a source yet (the others
-  // still starting in memory): their tabs show, and "All" waits for the rest.
+  // Works as soon as any stack has a source (the others may still be
+  // starting their history in memory).
   const src = dragoniteSource() ?? cfg.dragonite.map((d) => dragoniteSource([d.id])).find(Boolean);
   if (!src) return c.json(NO_DRAGONITE, 404);
   const areas = await cachedVm(`dragonite:${src.source}:areas`, 60_000 * 240 * 5, () => dragoniteAreas(src.vm, src.all, 20_000)).catch(
@@ -1927,7 +1949,11 @@ app.get("/api/system-status", async (c) => {
         ...cfg.instances.filter((i) => i.zapdosInstance).map((i) => ({ kind: "rotom" as const, name: i.name, zapdosInstance: i.zapdosInstance })),
         ...cfg.dragonite.filter((d) => d.zapdosInstance).map((d) => ({ kind: "dragonite" as const, name: d.name, zapdosInstance: d.zapdosInstance })),
         ...(cfg.golbat?.zapdosInstance ? [{ kind: "golbat" as const, name: "Golbat", zapdosInstance: cfg.golbat.zapdosInstance }] : []),
-      ].map((x) => ({ ...x, hasData: vmReady ? vmReady.has(`${x.kind}:${x.zapdosInstance}`) : undefined }))
+      ].map((x) => ({
+        ...x,
+        hasData: vmReady ? vmReady.has(`${x.kind}:${x.zapdosInstance}`) : undefined,
+        quiet: vmQuiet.has(`${x.kind}:${x.zapdosInstance}`),
+      }))
     : [];
   return c.json<SystemStatus>({
     checkedAt: Date.now(),

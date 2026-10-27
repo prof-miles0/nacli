@@ -268,13 +268,13 @@ optional `selector` added to every query.
 
 For every instance Zapdos does not cover, Nacli keeps the last `history_retention`
 (24 h) in memory, by reading its metrics every `poll_interval`: RotomNG's `/api/metrics`, and
-Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from Zapdos only when its `zapdos_instance` has data
-there; **without `[zapdos]`, without a `zapdos_instance`, or with one that has no data,
-they come from memory**. Nacli checks which ones have data at startup, whenever
-`config.toml` changes and every 5 minutes; an instance whose data stops arriving starts its
-memory history from that moment. That history and the Statistics one are saved to `state_file`
-on exit and every 5 minutes, and loaded at start, so a restart keeps the charts. Rotom's charts can mix both; a Dragonite chart that adds
-several stacks together uses memory as soon as one of them does.
+Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from Zapdos when its `zapdos_instance` has any data
+there in the last 30 days; **without `[zapdos]`, without a `zapdos_instance`, or with one that has no data,
+they come from memory**. Nacli checks at startup, whenever `config.toml` changes and every
+5 minutes; when an instance in Zapdos has sent nothing for an hour, its charts stay on Zapdos
+and a warning asks to check that Zapdos still scrapes it. The memory history and the
+Statistics one are saved to `state_file` on exit and every 5 minutes, and loaded at start, so
+a restart keeps the charts. Rotom's charts can mix both.
 
 </details>
 

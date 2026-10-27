@@ -72,14 +72,14 @@ export function DragoniteMetricsPage() {
   const { data: app } = useAppInfo();
   const dragonites = app?.dragonite ?? [];
   const [chosenRange, setRange] = useState(RANGES[2].value);
-  // "" = every Dragonite added together (the "All" tab); the stack picked on any page.
+  // One stack at a time: the one picked on any page, else the first.
   const [instance, setInstance] = useChosenStack();
   const [areas, setAreas] = useState<string[]>([]);
-  const instances = instance && dragonites.some((d) => d.id === instance) ? [instance] : [];
+  const one = dragonites.find((d) => d.id === instance) ?? dragonites[0];
+  const instances = one ? [one.id] : [];
   // How far back the charts shown go: 30 days from Zapdos, only
   // history_retention (24h by default) when they come from memory.
-  const one = dragonites.find((d) => d.id === instances[0]);
-  const maxRange = (one ? one.historyMs : app?.dragoniteHistory?.maxRangeMs) || Infinity;
+  const maxRange = one?.historyMs || Infinity;
   const ranges = RANGES.filter((r) => Number(r.value) <= maxRange);
   const range = ranges.some((r) => r.value === chosenRange) ? chosenRange : (ranges.at(-1)?.value ?? chosenRange);
   const rangeMs = Number(range);
@@ -100,8 +100,7 @@ export function DragoniteMetricsPage() {
 
   const summary = useQuery({ queryKey: ["dragonite-summary"], queryFn: endpoints.dragoniteSummary, refetchInterval: 30_000 });
   const color = useInstanceColor();
-  // An unknown remembered id (stack removed) falls back to "All".
-  const current = dragonites.some((d) => d.id === instance) ? instance : "";
+  const current = one?.id ?? "";
   // The area filter offers the open stack's areas; a picked area it lacks is dropped.
   const stackAreas = (current ? meta.data?.areasByStack?.[current] : undefined) ?? meta.data?.areas ?? [];
   const pickedAreas = areas.filter((a) => stackAreas.includes(a));
@@ -110,19 +109,16 @@ export function DragoniteMetricsPage() {
   if (!meta.data) return <Spinner className="mx-auto mt-20" />;
 
   const rows = summary.data?.instances ?? [];
-  const picked = current ? rows.filter((r) => r.id === current) : rows;
-  const tabs: FolderTab[] = [
-    { id: "", label: "All", compact: true },
-    ...dragonites.map((d) => {
-      const r = rows.find((x) => x.id === d.id);
-      return {
-        id: d.id,
-        label: d.name,
-        color: d.rotom ? color(d.rotom) : undefined,
-        summary: r ? `${fmt.int(r.locations)} loc./h` : undefined,
-      };
-    }),
-  ];
+  const picked = rows.filter((r) => r.id === current);
+  const tabs: FolderTab[] = dragonites.map((d) => {
+    const r = rows.find((x) => x.id === d.id);
+    return {
+      id: d.id,
+      label: d.name,
+      color: d.rotom ? color(d.rotom) : undefined,
+      summary: r ? `${fmt.int(r.locations)} loc./h` : undefined,
+    };
+  });
   const tabColor = tabs.find((t) => t.id === current)?.color;
 
   const loaded = panels.map((p, i) => ({ meta: p, q: results[i] }));
@@ -131,7 +127,7 @@ export function DragoniteMetricsPage() {
   return (
     <div className="animate-in flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        {/* Same folder tabs as Areas, with "All" first; the panel shows that tab's last hour. */}
+        {/* Same folder tabs as Areas; the panel shows that stack's last hour. */}
         <div className="flex flex-col">
           {dragonites.length > 1 ? <FolderTabs label="Stack" tabs={tabs} value={current} onChange={setInstance} /> : null}
           <FolderPanel color={tabColor} tabbed={dragonites.length > 1}>

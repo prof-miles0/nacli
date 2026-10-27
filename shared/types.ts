@@ -208,8 +208,8 @@ export interface AppInfo {
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
   /** Configured Dragonites (empty without [[dragonite]] + [zapdos]). */
   dragonite: DragoniteInfo[];
-  /** Where the charts of every Dragonite together come from, and how far back. */
-  dragoniteHistory?: { source: "zapdos" | "memory"; maxRangeMs: number };
+  /** Instances whose charts come from Zapdos but that sent nothing in the last hour: Zapdos may have stopped scraping them. */
+  zapdosQuiet: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string }[];
   /** How far back Golbat's charts go (Zapdos or memory). */
   golbatHistoryMs?: number;
   /** Golbat's API and a Dragonite API are configured: per-area statistics. */
@@ -925,7 +925,8 @@ export interface SystemStatus {
     local: boolean;
     health?: { ok: boolean; latencyMs?: number; error?: string };
     /** Each instance with a zapdos_instance: whether Zapdos has its data (unknown before the first check). */
-    instances: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string; hasData?: boolean }[];
+    /** quiet: data in Zapdos, but none in the last hour. */
+    instances: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string; hasData?: boolean; quiet?: boolean }[];
   };
   /** RotomNG on GitHub: newest stable and newest of all (pre-releases included). */
   rotomReleases?: { stable?: string; latest?: string; checkedAt: number; error?: string };

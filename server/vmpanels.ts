@@ -119,9 +119,13 @@ export async function vmLabelValues(
   label: string,
   match: string,
   timeoutMs: number,
+  /** Look back to here (unix s); Zapdos' own default otherwise. */
+  startS?: number,
 ): Promise<string[]> {
   if (vm.local) return vm.local.labelValues(label, match);
-  const res = await fetch(`${vm.url}/api/v1/label/${label}/values?${new URLSearchParams({ "match[]": match })}`, {
+  const params = new URLSearchParams({ "match[]": match });
+  if (startS) params.set("start", String(startS));
+  const res = await fetch(`${vm.url}/api/v1/label/${label}/values?${params}`, {
     headers: vm.headers,
     signal: AbortSignal.timeout(timeoutMs),
   });

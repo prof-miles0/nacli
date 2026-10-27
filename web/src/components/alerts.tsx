@@ -59,6 +59,18 @@ function useAlerts(): Alert[] {
   const rotomName = (id: string) => app.instances.find((i) => i.id === id)?.name ?? id;
   const out: Alert[] = [];
 
+  // Charts still come from Zapdos, but nothing new has arrived for an hour.
+  for (const z of app.zapdosQuiet ?? []) {
+    const label = z.kind === "rotom" ? `Rotom ${z.name}` : z.kind === "dragonite" ? `Dragonite ${z.name}` : "Golbat";
+    out.push({
+      key: `zapdos-quiet:${z.kind}:${z.zapdosInstance}`,
+      level: "warning",
+      subject: label,
+      text: `has sent nothing to Zapdos in the last hour (as "${z.zapdosInstance}"): check that Zapdos still scrapes it`,
+      to: "/status",
+    });
+  }
+
   for (const i of app.instances) {
     if (!i.reachable) {
       out.push({

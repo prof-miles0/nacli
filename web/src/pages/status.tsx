@@ -516,9 +516,15 @@ function ZapdosCard({ z }: { z: SystemStatus["zapdos"] }) {
                     <Row
                       key={x.zapdosInstance}
                       label={kind === "golbat" ? x.zapdosInstance : x.name}
-                      level={x.hasData === undefined ? "off" : x.hasData ? "ok" : "warn"}
-                      value={x.hasData === undefined ? "Checking…" : x.hasData ? "Data" : "No data"}
-                      detail={x.hasData === false ? <span title={`Nothing as “${x.zapdosInstance}” in the last hour`}>Charts from memory</span> : undefined}
+                      level={x.hasData === undefined ? "off" : x.hasData && !x.quiet ? "ok" : "warn"}
+                      value={x.hasData === undefined ? "Checking…" : x.quiet ? "Quiet" : x.hasData ? "Data" : "No data"}
+                      detail={
+                        x.quiet ? (
+                          <span title={`Data as “${x.zapdosInstance}”, but none in the last hour: check that Zapdos still scrapes it`}>Nothing in the last hour</span>
+                        ) : x.hasData === false ? (
+                          <span title={`Nothing as “${x.zapdosInstance}” in the last 30 days`}>Charts from memory</span>
+                        ) : undefined
+                      }
                     />
                   ))}
                 </div>
