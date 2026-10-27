@@ -279,10 +279,10 @@ To connect it:
    | Each Dragonite | `account` | `SELECT` | DB pill, moving accounts | The pill turns orange |
    | Each Dragonite | `account` | `INSERT`, `DELETE` | Moving accounts between stacks (Accounts › Move) | Moving refuses, nothing changes |
 
-   For example, with everything (leave out the lines you don't need):
+   For example, with everything (leave out the lines you don't need), run as an administrator:
 
    ```sql
-   CREATE USER 'nacli'@'%' IDENTIFIED BY 'a-long-random-password';  -- or 'nacli'@'<Nacli's IP>'
+   CREATE USER IF NOT EXISTS 'nacli'@'%' IDENTIFIED BY 'a-long-random-password';
 
    -- Golbat
    GRANT SELECT ON golbat.spawnpoint TO 'nacli'@'%';
@@ -292,7 +292,16 @@ To connect it:
    -- Each Dragonite with a database
    GRANT SELECT ON dragonite_alpha.account TO 'nacli'@'%';
    GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';      -- moving accounts
+
+   SHOW GRANTS FOR 'nacli'@'%';
    ```
+
+   **Grant to the account Nacli really logs in as.** MariaDB names an account by user *and*
+   host: `'nacli'@'%'`, `'nacli'@'localhost'` and `'nacli'@'172.18.0.%'` are three different
+   accounts, and grants given to one do nothing for the others. If the user already exists,
+   `SELECT user, host FROM mysql.user` shows its host. Easier: once `[database]` is in
+   `config.toml`, the Help page asks the server which account Nacli is matched to and writes
+   these lines for it and for your database names, ready to paste.
 
    Nacli never creates, alters or drops tables, and never writes to any other table. Moving
    accounts copies each row to the other Dragonite's `account` table and deletes it from the

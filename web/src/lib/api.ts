@@ -107,6 +107,7 @@ export const endpoints = {
     return api<GolbatPanelData>(`/golbat/panel/${encodeURIComponent(id)}?${q}`);
   },
   golbatSummary: () => api<GolbatSummary>("/golbat/summary"),
+  dbAccount: () => api<{ user?: string; host?: string; error?: string }>("/db-account"),
   dragoniteDb: () => api<DragoniteDbCheck[]>("/dragonite-db"),
   golbatDb: () => api<{ configured: boolean; ok?: boolean; ms?: number; error?: string; denied?: boolean }>("/golbat/db"),
   spawnpointOverview: () => api<SpawnpointOverview>("/golbat/spawnpoints"),

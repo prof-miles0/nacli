@@ -2,12 +2,13 @@
 // on it (Golbat's and each Dragonite's), rebuilt when the server or its
 // credentials change. Every query here only reads.
 
-import mysql, { type Pool } from "mysql2/promise";
+import mysql, { type Pool, type RowDataPacket } from "mysql2/promise";
 import type { DatabaseConfig } from "./config.ts";
 
 let pools = new Map<string, Pool>();
 let signature = "";
 
+/** A pool for one database on the server; "" for none (the account itself). */
 export function dbPool(db: DatabaseConfig, name: string): Pool {
   const sig = JSON.stringify([db.host, db.port, db.user, db.password]);
   if (sig !== signature) {
@@ -22,7 +23,7 @@ export function dbPool(db: DatabaseConfig, name: string): Pool {
       port: db.port,
       user: db.user,
       password: db.password,
-      database: name,
+      database: name || undefined,
       connectionLimit: 4,
       connectTimeout: 8000,
       enableKeepAlive: true,
@@ -33,6 +34,18 @@ export function dbPool(db: DatabaseConfig, name: string): Pool {
     pools.set(name, pool);
   }
   return pool;
+}
+
+/**
+ * The account the server matched Nacli's login to, as GRANT names it: the
+ * user and the host pattern it was created with ('%', an IP, a subnet…).
+ * Grants for any other host go to a different account.
+ */
+export async function dbAccount(db: DatabaseConfig): Promise<{ user: string; host: string }> {
+  const [rows] = await dbPool(db, "").query<RowDataPacket[]>({ sql: "SELECT CURRENT_USER() AS a", timeout: 8000 });
+  const a = String(rows[0]?.a ?? "");
+  const at = a.lastIndexOf("@");
+  return { user: a.slice(0, at), host: a.slice(at + 1) };
 }
 
 /** Closes every pool, e.g. when [database] is removed from config.toml. */

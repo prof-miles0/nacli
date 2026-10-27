@@ -118,7 +118,9 @@ zapdos_instance = "rotom-beta"
 # The MariaDB server of the stack. Each part names its own database on it:
 # database in [golbat] and in each [stack.dragonite]. Give Nacli an account of
 # its own. It reads and writes, but only these tables: grant just what you use.
-#   CREATE USER 'nacli'@'%' IDENTIFIED BY '...';
+# A grant names user and host: 'nacli'@'%' and 'nacli'@'localhost' are different
+# accounts. The Help page writes these lines for the account Nacli logs in as.
+#   CREATE USER IF NOT EXISTS 'nacli'@'%' IDENTIFIED BY '...';
 #   GRANT SELECT ON golbat.spawnpoint TO 'nacli'@'%';             -- Spawnpoints, DB pill
 #   GRANT SELECT ON golbat.pokemon_area_stats TO 'nacli'@'%';     -- Encounters
 #   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';             -- deleting spawnpoints

@@ -3,9 +3,11 @@
 
 import { Check, Copy, Minus } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router";
 import type { AppInfo } from "@shared/types";
 import { Card } from "@/components/ui";
+import { endpoints } from "@/lib/api";
 import { useAppInfo } from "@/lib/state";
 import { cn } from "@/lib/utils";
 
@@ -102,11 +104,18 @@ const STEPS = [
 /** A database name as SQL takes it: backquoted unless plain. */
 const ident = (name: string) => (/^[A-Za-z0-9_]+$/.test(name) ? name : `\`${name.replace(/`/g, "``")}\``);
 
-/** Step 6's SQL, with the user and databases from config.toml where set. */
-function grants(app?: AppInfo) {
+const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+
+/**
+ * Step 6's SQL, with the databases from config.toml where set, for the account
+ * Nacli logs in as when the server says which one: a grant names user and host,
+ * and the same user from another host is a different account.
+ */
+function grants(app?: AppInfo, account?: { user?: string; host?: string }) {
   const d = app?.databases;
-  const user = d?.user || "nacli";
-  const to = `'${user.replace(/'/g, "''")}'@'%'`;
+  const known = !!(account?.user && account.host);
+  const user = known ? account!.user! : d?.user || "nacli";
+  const to = `${q(user)}@${q(known ? account!.host! : "%")}`;
   const golbat = ident(d?.golbat || "golbat");
   const dbs = d?.dragonite.length ? d.dragonite : [{ name: "", database: "dragonite" }];
   /** One line per Dragonite database, its stack's name (and a note) after. */
@@ -119,8 +128,14 @@ function grants(app?: AppInfo) {
       .join("\n");
   return {
     filled: !!(d?.user || d?.golbat || d?.dragonite.length),
-    user,
-    sql: `CREATE USER ${to} IDENTIFIED BY 'a-long-random-password';
+    known,
+    to,
+    sql: `${
+      known
+        ? `-- For ${to}, the account Nacli logs in as`
+        : `-- A new account (nothing happens if it exists: its password stays)
+CREATE USER IF NOT EXISTS ${to} IDENTIFIED BY 'a-long-random-password';`
+    }
 
 -- Golbat
 GRANT SELECT ON ${golbat}.spawnpoint TO ${to};            -- Spawnpoints, DB pill
@@ -129,13 +144,17 @@ GRANT DELETE ON ${golbat}.spawnpoint TO ${to};            -- optional: deleting 
 
 -- Each Dragonite with a database in config.toml
 ${per((db) => `GRANT SELECT ON ${db}.account TO ${to};`)}
-${per((db) => `GRANT INSERT, DELETE ON ${db}.account TO ${to};`, "optional: moving accounts")}`,
+${per((db) => `GRANT INSERT, DELETE ON ${db}.account TO ${to};`, "optional: moving accounts")}
+
+-- What it has now
+SHOW GRANTS FOR ${to};`,
   };
 }
 
 export function HelpPage() {
   const { data: app } = useAppInfo();
-  const g = grants(app);
+  const account = useQuery({ queryKey: ["db-account"], queryFn: endpoints.dbAccount, enabled: !!app?.databases.user });
+  const g = grants(app, account.data);
   // Opened at a step (from a DB pill, say): bring it into view, also when already on this page.
   const { hash } = useLocation();
   useEffect(() => {
@@ -359,19 +378,31 @@ password = "..."`}</Code>
           </table>
         </div>
         <p>
-          With everything; leave out the lines you don't need. Replace <C>'%'</C> with Nacli's IP to accept it only from there
-          {g.filled ? "." : ", and the database names with yours."}
+          With everything; leave out the lines you don't need, and run it as an administrator (root, say).{" "}
+          {g.known ? (
+            <>
+              It is for <C>{g.to}</C>, the account the server matches Nacli's login to: a grant names the user <i>and</i> the host it may
+              connect from, and the same user from another host is a different account.
+            </>
+          ) : (
+            <>
+              A grant names the user <i>and</i> the host it may connect from: <C>'%'</C> is any host. If the account already exists with
+              another host (<C>SELECT user, host FROM mysql.user</C> shows it), use that one instead, or the grants go to a different account.
+            </>
+          )}
         </p>
-        {g.filled ? (
-          <p className="text-xs text-muted-foreground">Filled in with the user and databases in this config.toml; the rest are examples.</p>
-        ) : null}
+        <p className="text-xs text-muted-foreground">
+          {g.filled
+            ? `Filled in with the databases in this config.toml${g.known ? " and the account Nacli logs in as" : ""}; the rest are examples.`
+            : "The database names are examples: use yours."}
+        </p>
         <Code>{g.sql}</Code>
         <p>
           Nacli never creates, alters or drops tables, and never writes to any other table. Moving accounts copies each row to the other
           Dragonite's <C>account</C> table and deletes it from the first in one transaction, so a failure leaves both as they were.
         </p>
         <p>
-          To check the account from Nacli's host: <C>{`mariadb -h 10.0.0.40 -u ${g.user} -p -e "SHOW GRANTS"`}</C>.
+          The last line lists what the account has; the DB pills in the sidebar pick the change up within 30 seconds.
         </p>
       </Step>
 

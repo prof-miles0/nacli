@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type SelectHTMLAttributes,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -401,9 +402,13 @@ export function Table({ children, className, container }: { children: ReactNode;
   );
 }
 
+/** Room kept between a hover card and the window's edges. */
+const EDGE = 8;
+
 /**
  * Hover/focus card rendered in a portal, so tables with overflow cannot clip
- * it. Opens above the trigger, or below when there is no room above.
+ * it. Opens above the trigger, or below when it does not fit above, and always
+ * stays inside the window.
  */
 export function HoverCard({
   children,
@@ -415,31 +420,51 @@ export function HoverCard({
   /** Classes for the trigger wrapper, e.g. "block" to make it fill a cell. */
   className?: string;
 }) {
-  const [pos, setPos] = useState<{ x: number; y: number; above: boolean }>();
+  // The trigger's box; where the card goes is worked out once it is drawn and its size known.
+  const [at, setAt] = useState<DOMRect>();
+  const [pos, setPos] = useState<{ left: number; top: number }>();
+  const card = useRef<HTMLDivElement>(null);
   const show = (el: HTMLElement) => {
-    const r = el.getBoundingClientRect();
-    const above = r.top > 120;
-    setPos({ x: r.left, y: above ? r.top - 6 : r.bottom + 6, above });
+    setPos(undefined);
+    setAt(el.getBoundingClientRect());
   };
+  const hide = () => {
+    setAt(undefined);
+    setPos(undefined);
+  };
+  useLayoutEffect(() => {
+    if (!at || !card.current) return;
+    const { width, height } = card.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const above = at.top - 6 - height;
+    const below = at.bottom + 6;
+    // Above when it fits there, else below when it fits, else on the side with more room.
+    const top =
+      above >= EDGE ? above : below + height <= vh - EDGE ? below : at.top > vh - at.bottom ? above : below;
+    setPos({
+      left: Math.max(EDGE, Math.min(at.left, vw - width - EDGE)),
+      top: Math.max(EDGE, Math.min(top, vh - height - EDGE)),
+    });
+  }, [at]);
   return (
     <span
       className={cn("cursor-default", className)}
       tabIndex={0}
       onMouseEnter={(e) => show(e.currentTarget)}
-      onMouseLeave={() => setPos(undefined)}
+      onMouseLeave={hide}
       onFocus={(e) => show(e.currentTarget)}
-      onBlur={() => setPos(undefined)}
+      onBlur={hide}
     >
       {children}
-      {pos
+      {at
         ? createPortal(
             <div
+              ref={card}
               role="tooltip"
-              style={{ left: pos.x, top: pos.y }}
-              className={cn(
-                "animate-in pointer-events-none fixed z-50 max-w-sm rounded-md border bg-popover px-2.5 py-1.5 text-xs shadow-lg",
-                pos.above && "-translate-y-full",
-              )}
+              // Hidden for the moment it is measured, at the top left.
+              style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: "hidden" }}
+              className="animate-in pointer-events-none fixed z-50 max-h-[calc(100vh-16px)] max-w-[min(24rem,calc(100vw-16px))] overflow-hidden rounded-md border bg-popover px-2.5 py-1.5 text-xs shadow-lg"
             >
               {content}
             </div>,

@@ -127,7 +127,7 @@ import {
   type SpawnpointTuple,
   spawnpointsIn,
 } from "./golbat-db.ts";
-import { closeDbPools, dbCheck, dbError, dbPool } from "./db.ts";
+import { closeDbPools, dbAccount, dbCheck, dbError, dbPool } from "./db.ts";
 import { moveAccountRows } from "./dragonite-db.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
@@ -286,7 +286,7 @@ function reload(reason: string) {
     void checkVm();
     // A changed [database] (or none) must not answer from the old one.
     if (!cfg.database) closeDbPools();
-    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:") || k.startsWith("dragonite-db:")) vmCache.delete(k);
+    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:") || k.startsWith("dragonite-db:") || k === "db-account") vmCache.delete(k);
     console.log(`[config] reloaded (${reason}): ${cfg.instances.length} instances, ${cfg.users.length} users`);
   } catch (e) {
     console.error(`[config] reload failed, keeping the previous configuration: ${(e as Error).message}`);
@@ -2244,6 +2244,20 @@ app.get("/api/dragonite-db", async (c) => {
       }),
   );
   return c.json(out);
+});
+
+/**
+ * The account Nacli logs in as, for the Help page's grants: the server's own
+ * name for it (user and host pattern), so they go to this very account.
+ */
+app.get("/api/db-account", async (c) => {
+  const db = cfg.database;
+  if (!db) return c.json({});
+  try {
+    return c.json(await cachedVm("db-account", 60_000 * 240, () => dbAccount(db)));
+  } catch (e) {
+    return c.json({ error: dbError(e, "", "") });
+  }
 });
 
 // ---- Golbat's database ([database] + [golbat] database) ----
