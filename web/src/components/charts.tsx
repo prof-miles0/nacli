@@ -45,6 +45,30 @@ function timeTick(t: number, spanMs: number) {
   });
 }
 
+/**
+ * The rows with an empty one wherever the time to the next is well over the
+ * usual step, so no line or area is drawn across a stretch without data.
+ * The usual step is the lower quartile of the spacing: with many holes the
+ * median could be a hole itself.
+ */
+export function withBreaks(rows: Record<string, number>[]): Record<string, number>[] {
+  if (rows.length < 3) return rows;
+  const diffs = rows
+    .slice(1)
+    .map((r, i) => r.t - rows[i].t)
+    .filter((d) => d > 0)
+    .sort((a, b) => a - b);
+  const step = diffs[Math.floor(diffs.length / 4)];
+  if (!step) return rows;
+  const out = [rows[0]];
+  for (let i = 1; i < rows.length; i++) {
+    const gap = rows[i].t - rows[i - 1].t;
+    if (gap > step * 2.5) out.push({ t: rows[i - 1].t + gap / 2 });
+    out.push(rows[i]);
+  }
+  return out;
+}
+
 function ChartTooltip({
   active,
   payload,
@@ -58,11 +82,13 @@ function ChartTooltip({
   format: (n: number) => string;
   series?: Series[];
 }) {
-  if (!active || !payload?.length) return null;
+  // A break row (see withBreaks) has no values: nothing to show.
+  const shown = (payload ?? []).filter((p) => p.value != null);
+  if (!active || !shown.length) return null;
   return (
     <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-xl">
       <div className="mb-1.5 text-muted-foreground">{label ? fmt.time(label) : ""}</div>
-      {[...payload]
+      {shown
         .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
         .map((p) => (
           <div key={p.dataKey} className="flex items-center gap-2">
@@ -110,7 +136,6 @@ export function TimeChart({
   height = 220,
   stacked,
   integer,
-  gaps,
   max,
   linear,
   bars,
@@ -123,8 +148,6 @@ export function TimeChart({
   stacked?: boolean;
   /** Counts (workers, devices…): whole-number axis ticks only. */
   integer?: boolean;
-  /** Leave missing points as gaps instead of joining across them. */
-  gaps?: boolean;
   /** A fixed top for the left axis, e.g. 100 for shares that add up to 100%. */
   max?: number;
   /** Straight segments between points instead of smoothed curves. */
@@ -141,8 +164,9 @@ export function TimeChart({
       </div>
     );
   }
+  // Missing points are always gaps: nothing joins two points across a stretch without data.
   const common = {
-    data,
+    data: withBreaks(data),
     margin: { top: 8, right: 8, bottom: 0, left: 0 },
   };
   const xAxis = (
@@ -269,7 +293,7 @@ export function TimeChart({
               fill={`url(#${gid}-${i})`}
               fillOpacity={1}
               isAnimationActive={false}
-              connectNulls={!gaps}
+              connectNulls={false}
             />
           ))}
         </AreaChart>
@@ -295,7 +319,7 @@ export function TimeChart({
                 fill={s.color}
                 fillOpacity={0.1}
                 isAnimationActive={false}
-                connectNulls={!gaps}
+                connectNulls={false}
               />
             ))}
           {series.filter((s) => s.variant !== "area").map((s) => (
@@ -311,7 +335,7 @@ export function TimeChart({
               dot={false}
               activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
               isAnimationActive={false}
-              connectNulls={!gaps}
+              connectNulls={false}
             />
           ))}
         </ComposedChart>
@@ -445,7 +469,7 @@ export function OccupancyChart({ instances, height = 240 }: { instances: Occupan
       rows.set(r.t, row);
     }
   }
-  const data = [...rows.values()].sort((a, b) => a.t - b.t);
+  const data = withBreaks([...rows.values()].sort((a, b) => a.t - b.t));
   if (data.length < 2) {
     return (
       <div className="grid place-items-center text-sm text-muted-foreground" style={{ height }}>
@@ -509,7 +533,7 @@ export function OccupancyChart({ instances, height = 240 }: { instances: Occupan
               dot={false}
               activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
               isAnimationActive={false}
-              connectNulls
+              connectNulls={false}
             />
           ))}
         </ComposedChart>

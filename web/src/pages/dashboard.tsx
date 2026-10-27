@@ -548,7 +548,7 @@ function GolbatOverview() {
               <span className="text-sm text-muted-foreground">new · {fmt.int(s.pokemonIv)} with IV</span>
             </div>
           </div>
-          <TimeChart data={data} series={series} format={fmt.int} height={180} integer gaps />
+          <TimeChart data={data} series={series} format={fmt.int} height={180} integer />
           <Legend series={series} />
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             <GolbatStat label="100 %" value={fmt.int(s.hundos)} sub="last hour" />

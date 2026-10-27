@@ -95,7 +95,6 @@ export function PanelChart({
         axisFormat={unit.axis}
         stacked={meta.stacked}
         integer={unit.integer}
-        gaps
       />
     </ChartCard>
   );
