@@ -217,6 +217,64 @@ function GolbatHealth() {
   );
 }
 
+type DbState = "ok" | "denied" | "down";
+const dbState = (c: { ok?: boolean; denied?: boolean }): DbState => (c.ok ? "ok" : c.denied ? "denied" : "down");
+/** Several databases: the worst of them. */
+const worstDb = (states: DbState[]): DbState => (states.includes("down") ? "down" : states.includes("denied") ? "denied" : "ok");
+const DB_DOT: Record<DbState, string> = { ok: "bg-green-500", denied: "bg-amber-500", down: "bg-red-500" };
+const DB_TEXT: Record<DbState, string> = { ok: "text-muted-foreground", denied: "text-amber-400", down: "text-red-400" };
+
+/**
+ * The database pill: green while Nacli can read it, orange when the server
+ * answers but the database or its tables are not granted (or missing), red
+ * (pulsing) when it cannot be reached. A click opens the Help step that fixes it.
+ */
+function DbPill({ state }: { state: DbState }) {
+  return (
+    <NavLink
+      to={state === "denied" ? "/help#permissions" : "/help#database"}
+      aria-label={state === "ok" ? "Database readable" : state === "denied" ? "Database not readable: permissions" : "Database unreachable"}
+      className={cn(
+        "inline-flex h-4 items-center gap-1 rounded-full px-1.5 text-[10px] font-semibold transition-opacity hover:opacity-80",
+        state === "ok" ? "bg-green-500/15 text-green-400" : state === "denied" ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400",
+      )}
+    >
+      <Database className={cn("size-2.5", state !== "ok" && "animate-pulse")} />
+      DB
+    </NavLink>
+  );
+}
+
+/**
+ * Pill beside Dragonite's, when any Dragonite has its database set ([database]
+ * + database in [stack.dragonite]): green while Nacli can read every one.
+ */
+function DragoniteDbHealth() {
+  const { data: app } = useAppInfo();
+  const on = !!app?.dragonite.some((d) => d.database);
+  const { data } = useQuery({ queryKey: ["dragonite-db"], queryFn: endpoints.dragoniteDb, refetchInterval: 30_000, enabled: on });
+  if (!on || !data?.length) return null;
+  return (
+    <HoverCard
+      className="inline-flex"
+      content={
+        <div className="flex flex-col gap-1">
+          {data.map((d) => (
+            <span key={d.id} className="flex items-center gap-2">
+              <span className={cn("size-1.5 shrink-0 rounded-full", DB_DOT[dbState(d)])} />
+              <span className="font-medium">{d.name}</span>
+              <span className={DB_TEXT[dbState(d)]}>{d.ok ? `database readable · ${d.ms} ms` : d.error}</span>
+            </span>
+          ))}
+          {data.some((d) => !d.ok) ? <span className="text-muted-foreground">Click for the Help step that fixes it.</span> : null}
+        </div>
+      }
+    >
+      <DbPill state={worstDb(data.map(dbState))} />
+    </HoverCard>
+  );
+}
+
 /**
  * Pill of its own beside it, when Golbat's database is set ([database] +
  * [golbat] database): green while Nacli can read it, red with the reason.
@@ -226,6 +284,7 @@ function GolbatDbHealth() {
   const { data } = useQuery({ queryKey: ["golbat-db"], queryFn: endpoints.golbatDb, refetchInterval: 30_000, enabled: !!app?.golbatDb });
   if (!app?.golbatDb || !data?.configured) return null;
   const ok = !!data.ok;
+  const state = dbState(data);
   return (
     // inline-flex: aligned by their boxes, not by a text baseline that differs between them.
     <HoverCard
@@ -234,20 +293,14 @@ function GolbatDbHealth() {
         ok ? (
           <span>Golbat's database can be read · {data.ms} ms</span>
         ) : (
-          <span className="text-red-400">No access to Golbat's database: {data.error}</span>
+          <span className={DB_TEXT[state]}>
+            No access to Golbat's database: {data.error}
+            <span className="block text-muted-foreground">Click for the Help step that fixes it.</span>
+          </span>
         )
       }
     >
-      <span
-        aria-label={ok ? "Database readable" : "Database unreachable"}
-        className={cn(
-          "inline-flex h-4 items-center gap-1 rounded-full px-1.5 text-[10px] font-semibold",
-          ok ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400",
-        )}
-      >
-        <Database className={cn("size-2.5", !ok && "animate-pulse")} />
-        DB
-      </span>
+      <DbPill state={state} />
     </HoverCard>
   );
 }
@@ -279,7 +332,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               <div className="flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-sidebar-foreground/70">
                 {g.group}
                 {g.group === "Rotom" ? <InstanceHealth /> : null}
-                {g.group === "Dragonite" ? <DragoniteHealth /> : null}
+                {g.group === "Dragonite" ? (
+                  <>
+                    <DragoniteHealth />
+                    <DragoniteDbHealth />
+                  </>
+                ) : null}
                 {g.group === "Golbat" ? (
                   <>
                     <GolbatHealth />

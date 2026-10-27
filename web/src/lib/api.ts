@@ -7,6 +7,7 @@ import type {
   SpawnpointMap,
   SpawnpointOverview,
   AccountImportResult,
+  AccountMoveResult,
   AccountOwner,
   AccountCounts,
   AccountLevelCounts,
@@ -14,6 +15,7 @@ import type {
   DragoniteAccountPage,
   DragoniteArea,
   DragoniteAreas,
+  DragoniteDbCheck,
   StackGeofences,
   DragoniteMeta,
   DragoniteProxies,
@@ -105,7 +107,8 @@ export const endpoints = {
     return api<GolbatPanelData>(`/golbat/panel/${encodeURIComponent(id)}?${q}`);
   },
   golbatSummary: () => api<GolbatSummary>("/golbat/summary"),
-  golbatDb: () => api<{ configured: boolean; ok?: boolean; ms?: number; error?: string }>("/golbat/db"),
+  dragoniteDb: () => api<DragoniteDbCheck[]>("/dragonite-db"),
+  golbatDb: () => api<{ configured: boolean; ok?: boolean; ms?: number; error?: string; denied?: boolean }>("/golbat/db"),
   spawnpointOverview: () => api<SpawnpointOverview>("/golbat/spawnpoints"),
   spawnpointTable: () => api<{ rows: number }>("/golbat/spawnpoint-table"),
   /** The whole spawnpoint table as a .sql.gz file: a plain link, the browser saves it as it streams. */
@@ -242,6 +245,8 @@ export const endpoints = {
     stack: string,
     body: { accounts: { username: string; password: string }[]; level: number; provider: string; last_released: number },
   ) => api<AccountImportResult>(`/dragonite/${encodeURIComponent(stack)}/accounts/import`, { method: "POST", body: JSON.stringify(body) }),
+  moveAccounts: (body: { to: string } & ({ accounts: { stack: string; username: string }[] } | { from: string; count: number })) =>
+    api<AccountMoveResult>("/dragonite-accounts/move", { method: "POST", body: JSON.stringify(body) }),
   accountDuplicates: () => api<AccountOwner[]>("/dragonite-accounts/duplicates"),
   allAccounts: (p: {
     page: number;

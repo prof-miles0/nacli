@@ -68,7 +68,7 @@ the server; the browser only ever talks to Nacli.
 
 | Page | What you can do |
 |---|---|
-| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state. Add one account or import a CSV. |
+| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state. Add one account or import a CSV. Move accounts to another stack: tick them, or pick how many available ones; their rows go from one Dragonite database to the other and both Dragonites reload their accounts (needs a `database` in both, and the grants below). |
 | **Areas** | Every area with its live workers. Create, view and edit them (with a map, routes from [Kōji](https://github.com/TurtIeSocks/Koji), every mode), enable or disable them, start or stop quests, and copy or move them between stacks. |
 | **Unbound Modes** | Level, Invasion and Scout modes: create, edit, delete and copy them; scout jobs on a map and the scout queue. |
 | **Proxies** | Every stack's proxies in one list: add one or import many, copy them to other stacks, enable, disable or delete them. |
@@ -111,6 +111,10 @@ the server; the browser only ever talks to Nacli.
 
 - **Charts without Zapdos**: whatever Zapdos does not cover is kept in memory and saved to
   disk, so a restart keeps the last 24 h.
+- **A database connection**: one MariaDB account with read access to Golbat's database and
+  each Dragonite's, with a DB pill per part in the sidebar.
+- **Help** in the user menu: how to connect every part of the stack, the database account's
+  permissions, and what the running `config.toml` has connected.
 - Light and dark themes, and a layout made for phones too.
 
 <p align="center">
@@ -225,7 +229,9 @@ reports (with its `url`), so the stack's `name` can be anything.
   (`http://host:7272`) or its admin plus `/api`; and optionally `zapdos_instance`, `api_secret`
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
-  controls act on that Dragonite.
+  controls act on that Dragonite. `database` (optional, needs `[database]`) names its
+  database on that server; a DB pill next to Dragonite in the sidebar shows whether each one
+  can be read. RotomNG has no database.
 
 `zapdos_instance` is each instance's `instance` label in Zapdos, and it only counts
 with `[zapdos]` (see below).
@@ -248,15 +254,41 @@ public URLs and a client key. The example uses CARTO's Voyager and Dark Matter s
 - `stats_poll_interval` (optional, needs `url`): how often the Statistics figures are taken
   to chart their last 24 h (kept in memory). Empty or missing: no history. At least `"5m"`.
 - `database` (optional, needs `[database]`): the name of Golbat's database on that server.
-  Enables the Spawnpoints page and adds a database mark to Golbat's pill in the sidebar.
+  Enables the Spawnpoints and Encounters pages, and a DB pill next to Golbat in the sidebar.
 
 #### `[database]` (optional)
 
 The MariaDB server of the stack: `host`, `port` (default 3306), `username` and `password`.
-Each part names its own database on it (for now `[golbat] database`). `SELECT` on those
-databases is enough for every page; the Spawnpoints tool that deletes spawnpoints also needs
-`DELETE` on Golbat's `spawnpoint` table, and without it refuses (nothing else ever writes).
-Its address never reaches the browser.
+Each part names its own database on it: `database` in `[golbat]` and in each
+`[stack.dragonite]`. Its address and password never reach the browser.
+
+To connect it:
+
+1. Make MariaDB reachable from Nacli: its `bind-address` must not be only `127.0.0.1` when
+   Nacli runs on another host or in Docker, and port 3306 must be open from Nacli's host.
+2. Give Nacli an account of its own (not Golbat's or Dragonite's) with these permissions:
+
+   ```sql
+   CREATE USER 'nacli'@'%' IDENTIFIED BY 'a-long-random-password';  -- or 'nacli'@'<Nacli's IP>'
+   GRANT SELECT ON golbat.* TO 'nacli'@'%';            -- Spawnpoints and Encounters
+   GRANT SELECT ON dragonite_alpha.* TO 'nacli'@'%';   -- each Dragonite with a database
+   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';   -- optional: the delete tool only
+   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';  -- optional: moving accounts, each Dragonite
+   ```
+
+   | Database | Grant | Tables read | For |
+   |---|---|---|---|
+   | Golbat | `SELECT` | `spawnpoint`, `pokemon_area_stats` | Spawnpoints, Encounters, the spawnpoint backup |
+   | Golbat | `DELETE` on `spawnpoint` | — | Only the tool that deletes spawnpoints (it refuses without it) |
+   | Each Dragonite | `SELECT` | `account` | The connection check, and moving accounts |
+   | Each Dragonite | `INSERT`, `DELETE` on `account` | — | Only moving accounts between stacks (it refuses without them) |
+
+   Nothing else in Nacli ever writes to the database.
+3. Add `[database]` and the `database` names to `config.toml` and save. The DB pills in the
+   sidebar turn green, or red with the reason on hover.
+
+The **Help** page (user menu, top right) walks through connecting every part of the stack,
+with these permissions, and lists what the running `config.toml` has connected.
 
 #### `[zapdos]` (optional)
 
@@ -271,7 +303,7 @@ For every instance Zapdos does not cover, Nacli keeps the last `history_retentio
 Dragonite's and Golbat's `/metrics` (Dragonite's needs its own `url`, not the admin's). An instance's charts come from Zapdos when its `zapdos_instance` has any data
 there in the last 30 days; **without `[zapdos]`, without a `zapdos_instance`, or with one that has no data,
 they come from memory**. Nacli checks at startup, whenever `config.toml` changes and every
-5 minutes; when an instance in Zapdos has sent nothing for an hour, its charts stay on Zapdos
+5 minutes; when an instance in Zapdos has sent nothing for 30 minutes, its charts stay on Zapdos
 and a warning asks to check that Zapdos still scrapes it. The memory history and the
 Statistics one are saved to `state_file` on exit and every 5 minutes, and loaded at start, so
 a restart keeps the charts. Rotom's charts can mix both.
@@ -316,6 +348,7 @@ flowchart LR
     N -- "API" --> D1 & D2
     N -- "status, actions" --> R1 & R2
     N -- "devices, statistics" --> G["Golbat"]
+    N -- "read-only SQL" --> M[("MariaDB<br/>(Golbat + Dragonite DBs)")]
     N -- "PromQL" --> V[("Zapdos<br/>(VictoriaMetrics)")]
     N -. "release checks" .-> GH["GitHub"]
 ```
@@ -343,7 +376,7 @@ flowchart LR
 ## 📁 Project layout
 
 ```
-server/        API server: config, auth, RotomNG, Dragonite, Golbat and Zapdos
+server/        API server: config, auth, RotomNG, Dragonite, Golbat, Zapdos and MariaDB
 shared/        Types shared by the server and the web app
 web/           React app (pages, components, styles)
 docs/          The README's diagram and screenshots

@@ -1,8 +1,9 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Plus } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type AccountCounts, type AccountLevelCounts, type AccountState, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
 import { AddAccountsModal } from "@/components/account-forms";
+import { MoveBar, MoveCountModal, movableStacks, type PickedAccount } from "@/components/account-move";
 import { FilterMenu } from "@/components/filter-menu";
 import { StackTag } from "@/components/stack-tag";
 import { SearchBox } from "@/components/table-tools";
@@ -303,6 +304,21 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
   const { stacks, colorOf, nameOf } = useStackColors();
   // One stack: every row would carry the same dot.
   const multi = stacks.length > 1;
+  // Ticked accounts, kept across pages and filters; only free ones, in stacks that can move them.
+  const movable = movableStacks(stacks);
+  const canMove = !inUse && movable.length > 1;
+  const [picked, setPicked] = useState<Map<string, PickedAccount>>(() => new Map());
+  const keyOf = (a: { stack?: string; username: string }) => `${a.stack}\t${a.username}`;
+  const pickable = (a: DragoniteAccount) => canMove && !a.in_use && movable.some((d) => d.id === a.stack);
+  const togglePick = (list: DragoniteAccount[], on: boolean) =>
+    setPicked((m) => {
+      const n = new Map(m);
+      for (const a of list) {
+        if (on) n.set(keyOf(a), { stack: a.stack ?? "", username: a.username });
+        else n.delete(keyOf(a));
+      }
+      return n;
+    });
   const [page, setPage] = useState(0);
   // In use: most recently picked first; the rest: most recently returned first.
   const [sortBy, setSortBy] = useState<string>(inUse ? "last_selected" : "last_released");
@@ -357,6 +373,9 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
   );
 
   const data = list.data;
+  const shownPickable = (data?.rows ?? []).filter(pickable);
+  const allShown = shownPickable.length > 0 && shownPickable.every((a) => picked.has(keyOf(a)));
+  const cols = (multi ? 8 : 7) + (canMove ? 1 : 0);
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -372,6 +391,16 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
           <StateFilter value={status} counts={data?.states} onChange={(v) => (setStatus(v), setPage(0))} />
         </div>
       </div>
+      {picked.size ? (
+        <MoveBar
+          picked={[...picked.values()]}
+          stacks={movable}
+          nameOf={nameOf}
+          colorOf={colorOf}
+          onDone={() => setPicked(new Map())}
+          onClear={() => setPicked(new Map())}
+        />
+      ) : null}
       {list.error ? (
         <p className="text-sm text-red-300">{(list.error as Error).message}</p>
       ) : !data ? (
@@ -381,6 +410,21 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
           <Table>
             <thead>
               <tr>
+                {canMove ? (
+                  <th className="w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all shown"
+                      checked={allShown}
+                      disabled={!shownPickable.length}
+                      ref={(el) => {
+                        if (el) el.indeterminate = !allShown && shownPickable.some((a) => picked.has(keyOf(a)));
+                      }}
+                      onChange={() => togglePick(shownPickable, !allShown)}
+                      className="size-4 cursor-pointer align-middle accent-[var(--primary)]"
+                    />
+                  </th>
+                ) : null}
                 {/* The stack column: colour dots only, no heading. */}
                 {multi ? <th className="w-8" aria-label="Stack" /> : null}
                 {sortHeader("username", SORTS[0].label)}
@@ -395,7 +439,7 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
             <tbody className={cn(list.isPlaceholderData && "opacity-60")}>
               {data.rows.length === 0 ? (
                 <tr>
-                  <td colSpan={multi ? 8 : 7} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={cols} className="py-8 text-center text-muted-foreground">
                     No matching accounts.
                   </td>
                 </tr>
@@ -403,7 +447,20 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
               {data.rows.map((a) => {
                 const st = accountStatus(a);
                 return (
-                  <tr key={`${a.stack}:${a.username}`}>
+                  <tr key={`${a.stack}:${a.username}`} className={cn(picked.has(keyOf(a)) && "bg-accent/40")}>
+                    {canMove ? (
+                      <td className="w-8">
+                        {pickable(a) ? (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${a.username}`}
+                            checked={picked.has(keyOf(a))}
+                            onChange={(e) => togglePick([a], e.target.checked)}
+                            className="size-4 cursor-pointer align-middle accent-[var(--primary)]"
+                          />
+                        ) : null}
+                      </td>
+                    ) : null}
                     {multi ? (
                       <td className="w-8">
                         {/* Just the stack's colour; its name on hover. */}
@@ -541,6 +598,8 @@ export function DragoniteAccountsPage() {
   const dragonites = app?.dragonite ?? [];
   const withApi = dragonites.filter((d) => d.accounts);
   const [adding, setAdding] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const movable = movableStacks(withApi);
 
   if (!app) return <Spinner className="mx-auto mt-20" />;
 
@@ -548,6 +607,12 @@ export function DragoniteAccountsPage() {
     <div className="animate-in flex flex-col gap-6">
       {withApi.length ? (
         <div className="-mb-2 flex flex-wrap justify-end gap-2">
+          {movable.length > 1 ? (
+            <Button variant="outline" onClick={() => setMoving(true)}>
+              <ArrowRightLeft />
+              Move
+            </Button>
+          ) : null}
           <Button onClick={() => setAdding(true)}>
             <Plus />
             Add
@@ -555,6 +620,7 @@ export function DragoniteAccountsPage() {
         </div>
       ) : null}
       {adding ? <AddAccountsModal stacks={withApi} onClose={() => setAdding(false)} /> : null}
+      {moving ? <MoveCountModal stacks={movable} nameOf={(id) => movable.find((d) => d.id === id)?.name ?? id} onClose={() => setMoving(false)} /> : null}
       {withApi.length > 1 ? <DuplicatesCard stacks={withApi} /> : null}
       <div className={cn("grid gap-4", dragonites.length > 1 && "lg:grid-cols-2")}>
         {dragonites.map((d) => (

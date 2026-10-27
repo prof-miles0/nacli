@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ChevronDown, OctagonAlert } from "lucide-react";
+import { AlertTriangle, ChevronDown, CircleHelp, OctagonAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { endpoints } from "@/lib/api";
@@ -14,6 +14,8 @@ interface Alert {
   subject: string;
   text: string;
   to: string;
+  /** The Help step that explains the setting behind it, when it is one. */
+  help?: string;
 }
 
 const ago = (s?: number) => (s != null ? ` (last seen ${fmt.ago(Date.now() - s * 1000)})` : "");
@@ -70,15 +72,16 @@ function useAlerts(): Alert[] {
     });
   }
 
-  // Charts still come from Zapdos, but nothing new has arrived for an hour.
+  // Charts still come from Zapdos, but nothing new has arrived for 30 minutes.
   for (const z of app.zapdosQuiet ?? []) {
     const label = z.kind === "rotom" ? `Rotom ${z.name}` : z.kind === "dragonite" ? `Dragonite ${z.name}` : "Golbat";
     out.push({
       key: `zapdos-quiet:${z.kind}:${z.zapdosInstance}`,
       level: "warning",
       subject: label,
-      text: `has sent nothing to Zapdos in the last hour (as "${z.zapdosInstance}"): check that Zapdos still scrapes it`,
+      text: `has sent nothing to Zapdos in the last 30 minutes (as "${z.zapdosInstance}"): check that Zapdos still scrapes it`,
       to: "/status",
+      help: "zapdos",
     });
   }
 
@@ -90,6 +93,7 @@ function useAlerts(): Alert[] {
         subject: `Rotom ${i.name}`,
         text: `offline${i.lastError ? ` (${i.lastError})` : ""}`,
         to: `/instances#${i.id}`,
+        help: "stacks",
       });
       continue;
     }
@@ -109,7 +113,7 @@ function useAlerts(): Alert[] {
   for (const d of dragonite.data?.instances ?? []) {
     const subject = `Dragonite ${d.name}`;
     if (!isUp(d)) {
-      out.push({ key: `dragonite:${d.id}`, level: "critical", subject, text: `isn't sending metrics${ago(d.lastSeenS)}`, to: "/" });
+      out.push({ key: `dragonite:${d.id}`, level: "critical", subject, text: `isn't sending metrics${ago(d.lastSeenS)}`, to: "/", help: "zapdos" });
       continue;
     }
     const state = linkState(d);
@@ -120,6 +124,7 @@ function useAlerts(): Alert[] {
         subject,
         text: `no Rotom sees its controllers${d.rotom ? ` (should be on ${rotomName(d.rotom)})` : ""}`,
         to: "/",
+        help: "stack-links",
       });
     } else if (state === "mismatch") {
       const where = d.links.filter((l) => l.controllers > 0 && l.rotomId !== d.rotom).map((l) => rotomName(l.rotomId));
@@ -129,6 +134,7 @@ function useAlerts(): Alert[] {
         subject,
         text: `has controllers on ${where.join(", ")}, but is configured for ${rotomName(d.rotom!)}`,
         to: "/",
+        help: "stack-links",
       });
     }
   }
@@ -153,6 +159,7 @@ function useAlerts(): Alert[] {
       subject: `Rotom ${rotomName(u.rotomId)}`,
       text: `has ${u.controllers} controller${u.controllers === 1 ? "" : "s"} from "${u.source}", which matches no [[stack]]`,
       to: "/",
+      help: "stack-links",
     });
   }
 
@@ -171,7 +178,7 @@ function useAlerts(): Alert[] {
 
   const g = golbat.data;
   if (g && (g.lastSeenS == null || g.lastSeenS >= 120)) {
-    out.push({ key: "golbat", level: "critical", subject: "Golbat", text: `isn't sending metrics${ago(g.lastSeenS)}`, to: "/golbat/metrics" });
+    out.push({ key: "golbat", level: "critical", subject: "Golbat", text: `isn't sending metrics${ago(g.lastSeenS)}`, to: "/golbat/metrics", help: "golbat" });
   }
 
   // Critical first; stable otherwise.
@@ -211,9 +218,20 @@ export function AlertsBar() {
                   a.level === "critical" ? "animate-pulse bg-red-500" : "bg-amber-500",
                 )}
               />
-              <Link to={a.to} className="min-w-0 hover:underline">
-                <b className="font-medium">{a.subject}</b> <span className="text-muted-foreground">{a.text}</span>
-              </Link>
+              <span className="min-w-0">
+                <Link to={a.to} className="hover:underline">
+                  <b className="font-medium">{a.subject}</b> <span className="text-muted-foreground">{a.text}</span>
+                </Link>
+                {a.help ? (
+                  <Link
+                    to={`/help#${a.help}`}
+                    className="ml-2 inline-flex items-center gap-0.5 align-baseline text-xs font-medium whitespace-nowrap text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    <CircleHelp className="size-3 self-center" />
+                    Help
+                  </Link>
+                ) : null}
+              </span>
             </li>
           ))}
         </ul>

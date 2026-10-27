@@ -32,6 +32,8 @@ export interface DragoniteConfig {
    * (http://host:7272) or its admin plus "/api", which forwards the same paths.
    */
   api?: { url: string; headers: Record<string, string> };
+  /** Its database's name on the [database] server (unset: none). */
+  database?: string;
 }
 
 export interface ZapdosConfig {
@@ -227,7 +229,7 @@ export function loadConfig(path: string): AppConfig {
     golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm, !!raw.database) : undefined,
     database: raw.database ? parseDatabase(raw.database as Table) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
-    dragonite: parseDragonite(stacks, instances),
+    dragonite: parseDragonite(stacks, instances, !!raw.database),
     users,
     instances,
   };
@@ -236,6 +238,7 @@ export function loadConfig(path: string): AppConfig {
 function parseDragonite(
   stacks: { name: string; rotom?: Table; dragonite?: Table }[],
   rotoms: RotomInstanceConfig[],
+  withDatabase: boolean,
 ): DragoniteConfig[] {
   const seen = new Set<string>();
   return stacks
@@ -254,6 +257,8 @@ function parseDragonite(
       if (basic?.username) {
         headers.Authorization = `Basic ${Buffer.from(`${str(basic.username)}:${str(basic.password)}`).toString("base64")}`;
       }
+      const database = str(d.database).trim() || undefined;
+      if (database && !withDatabase) throw new Error(`[stack.dragonite] of "${name}": database needs a [database] section with the server`);
       return {
         id,
         name,
@@ -262,6 +267,7 @@ function parseDragonite(
         // It feeds the Rotom of its own stack.
         rotom: rotom ? rotoms.find((r) => r.name === name)?.id : undefined,
         api: url ? { url, headers } : undefined,
+        database,
       };
     });
 }

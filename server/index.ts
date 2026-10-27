@@ -32,6 +32,7 @@ import type {
   ProxyStackSummary,
   AccountLevelCounts,
   DragoniteAccount,
+  DragoniteDbCheck,
   DragoniteSummary,
   MapDevice,
   MapTrailPoint,
@@ -127,6 +128,7 @@ import {
   spawnpointsIn,
 } from "./golbat-db.ts";
 import { closeDbPools, dbCheck, dbError, dbPool } from "./db.ts";
+import { moveAccountRows } from "./dragonite-db.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
 
@@ -170,7 +172,7 @@ const VM_CHECK_MS = 5 * 60_000;
 const VM_HAS_DATA_MS = 30 * 86_400_000;
 /** `${kind}:${zapdos_instance}` with data in Zapdos, however old; undefined until the first check. */
 let vmReady: Set<string> | undefined;
-/** Those of them with nothing in the last hour: Zapdos may have stopped scraping them. */
+/** Those of them with nothing in the last 30 minutes: Zapdos may have stopped scraping them. */
 let vmQuiet = new Set<string>();
 
 /**
@@ -185,7 +187,7 @@ function onVm(kind: VmKind, zapdosInstance: string) {
 
 /**
  * Which instances Zapdos has data for (their charts come from there, however
- * old the data), and which of those have sent nothing in the last hour (a
+ * old the data), and which of those have sent nothing in the last 30 minutes (a
  * warning: Zapdos may have stopped scraping them).
  */
 async function checkVm() {
@@ -209,7 +211,7 @@ async function checkVm() {
       try {
         const [stored, recent] = await Promise.all([
           vmLabelValues(vm, L, match, 10_000, Math.floor((Date.now() - VM_HAS_DATA_MS) / 1000)),
-          vmScalars(vm, `count by (${L}) (last_over_time(${match}[1h]))`, L, 10_000),
+          vmScalars(vm, `count by (${L}) (last_over_time(${match}[30m]))`, L, 10_000),
         ]);
         for (const n of names) {
           if (!stored.includes(n)) continue;
@@ -229,7 +231,7 @@ async function checkVm() {
           console.log(`[zapdos] ${kind} "${n}": ${next.has(k) ? "data in Zapdos" : "no data in Zapdos, charts from memory"}`);
         }
         if (vmQuiet.has(k) !== quiet.has(k)) {
-          console.log(`[zapdos] ${kind} "${n}": ${quiet.has(k) ? "nothing in the last hour, check that Zapdos still scrapes it" : "data arriving again"}`);
+          console.log(`[zapdos] ${kind} "${n}": ${quiet.has(k) ? "nothing in the last 30 minutes, check that Zapdos still scrapes it" : "data arriving again"}`);
         }
       }
     }
@@ -284,7 +286,7 @@ function reload(reason: string) {
     void checkVm();
     // A changed [database] (or none) must not answer from the old one.
     if (!cfg.database) closeDbPools();
-    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:")) vmCache.delete(k);
+    for (const k of vmCache.keys()) if (k.startsWith("golbat-db:") || k.startsWith("dragonite-db:")) vmCache.delete(k);
     console.log(`[config] reloaded (${reason}): ${cfg.instances.length} instances, ${cfg.users.length} users`);
   } catch (e) {
     console.error(`[config] reload failed, keeping the previous configuration: ${(e as Error).message}`);
@@ -386,13 +388,14 @@ app.get("/api/app", async (c) => {
     golbat: !!golbatCtx(),
     golbatMap: !!cfg.golbat?.api,
     map: cfg.map,
-    dragonite: cfg.dragonite.map(({ id, name, rotom, api, zapdosInstance }) => ({
+    dragonite: cfg.dragonite.map(({ id, name, rotom, api, zapdosInstance, database }) => ({
       id,
       name,
       rotom,
       accounts: !!api,
       historyMs: dragoniteSource([id])?.maxRangeMs ?? 0,
       fromVm: onVm("dragonite", zapdosInstance),
+      database: !!(cfg.database && database),
     })),
     golbatHistoryMs: golbatCtx()?.maxRangeMs,
     dragoniteIdle: cfg.dragonite.filter((d) => dragoniteIdle.has(d.id)).map((d) => ({ id: d.id, name: d.name })),
@@ -404,6 +407,11 @@ app.get("/api/app", async (c) => {
     golbatStats: !!cfg.golbat?.api && cfg.dragonite.some((d) => d.api),
     golbatStatsHistoryMs: statsEvery,
     golbatDb: !!golbatDb(),
+    databases: {
+      user: cfg.database?.user,
+      golbat: cfg.golbat?.database || undefined,
+      dragonite: cfg.dragonite.flatMap((d) => (d.database ? [{ name: d.name, database: d.database }] : [])),
+    },
     golbatSpawnpoints: !!golbatDb() && cfg.dragonite.some((d) => d.api),
     instances: registry.list(),
   });
@@ -844,6 +852,93 @@ app.post("/api/dragonite/:id/accounts/import", async (c) => {
         `${inserted} inserted, ${here} already there, ${elsewhere.length} in another stack, ${repeated} repeated`,
     );
     return c.json({ inserted, alreadyHere: here + (send.length - inserted), repeated, elsewhere });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/** A stack whose accounts can move: its API (in use, reload) and its database. */
+const movable = (id: unknown) => {
+  const d = typeof id === "string" ? dragoniteWithApi(id) : undefined;
+  return d?.database && cfg.database ? (d as typeof d & { database: string }) : undefined;
+};
+
+/**
+ * Moves accounts to another stack: the rows go from one Dragonite database to
+ * the other, then both Dragonites reload their accounts. Either `accounts`
+ * (stack and username, ticked in the list) or `from` and `count` (Nacli picks
+ * the available ones there, highest level first). Accounts in use are left.
+ */
+app.post("/api/dragonite-accounts/move", async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const to = movable(b.to);
+  if (!to) return c.json({ error: "the target stack needs its API and a database" }, 400);
+  const bySource = new Map<string, string[]>();
+  if (Array.isArray(b.accounts)) {
+    if (!b.accounts.length || b.accounts.length > ACCOUNT_IMPORT_MAX) return c.json({ error: `send between 1 and ${ACCOUNT_IMPORT_MAX} accounts` }, 400);
+    for (const raw of b.accounts as Record<string, unknown>[]) {
+      const username = accountText(raw?.username, 128);
+      if (!username || typeof raw.stack !== "string") return c.json({ error: "each account needs its stack and username" }, 400);
+      if (raw.stack === to.id) continue;
+      bySource.set(raw.stack, [...(bySource.get(raw.stack) ?? []), username]);
+    }
+  } else {
+    const count = Number(b.count);
+    if (typeof b.from !== "string" || b.from === to.id) return c.json({ error: "pick a stack to move from, other than the target" }, 400);
+    if (!Number.isInteger(count) || count < 1 || count > ACCOUNT_IMPORT_MAX) return c.json({ error: `count must be from 1 to ${ACCOUNT_IMPORT_MAX}` }, 400);
+    bySource.set(b.from, []);
+  }
+  const sources = [...bySource.keys()].map(movable);
+  if (sources.some((d) => !d)) return c.json({ error: "every stack to move from needs its API and a database" }, 400);
+
+  try {
+    // What the Dragonites hold now, not what was cached: an account picked a moment ago stays.
+    for (const d of [...sources, to]) forgetAccounts(d!.id);
+    const inTarget = new Set((await allAccountsOf(to)).map((a) => a.username.toLowerCase()));
+    const results: { stack: string; moved: number; inUse: number; inTarget: number; missing: number; error?: string }[] = [];
+    for (const d of sources as NonNullable<(typeof sources)[number]>[]) {
+      const now = new Map((await allAccountsOf(d)).map((a) => [a.username.toLowerCase(), a]));
+      let wanted = bySource.get(d.id)!;
+      if (!wanted.length) {
+        wanted = [...now.values()]
+          .filter((a) => accountState(a) === "available" && !inTarget.has(a.username.toLowerCase()))
+          .sort((x, y) => y.level - x.level || (x.last_released ?? 0) - (y.last_released ?? 0))
+          .slice(0, Number(b.count))
+          .map((a) => a.username);
+      }
+      const busy = wanted.filter((u) => now.get(u.toLowerCase())?.in_use);
+      const free = wanted.filter((u) => !now.get(u.toLowerCase())?.in_use);
+      try {
+        const r = free.length ? await moveAccountRows(cfg.database!, d.database, to.database, free) : { moved: [], inTarget: [], missing: [] };
+        results.push({ stack: d.id, moved: r.moved.length, inUse: busy.length, inTarget: r.inTarget.length, missing: r.missing.length });
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        const error =
+          code === "ER_TABLEACCESS_DENIED_ERROR" || code === "ER_DBACCESS_DENIED_ERROR"
+            ? `the [database] user cannot move accounts from "${d.database}" to "${to.database}" (needs SELECT, INSERT and DELETE on both)`
+            : dbError(e, (e as { db?: string }).db ?? d.database, "Dragonite");
+        results.push({ stack: d.id, moved: 0, inUse: busy.length, inTarget: 0, missing: 0, error });
+      }
+    }
+    // Both sides read their accounts again: the source first, so it stops handing out the moved ones.
+    const touched = [...results.filter((r) => r.moved).map((r) => cfg.dragonite.find((x) => x.id === r.stack)!), ...(results.some((r) => r.moved) ? [to] : [])];
+    const reloads: { stack: string; error?: string }[] = [];
+    for (const d of touched) {
+      try {
+        await dragoniteControl(d, "reload-accounts", cfg.requestTimeoutMs);
+        reloads.push({ stack: d.id });
+      } catch (e) {
+        reloads.push({ stack: d.id, error: (e as Error).message });
+      }
+      forgetAccounts(d.id);
+    }
+    for (const d of [...sources, to]) forgetAccounts(d!.id);
+    console.log(
+      `[dragonite] ${c.get("user")} moves accounts to ${to.name}: ` +
+        results.map((r) => `${r.stack} ${r.error ? `failed (${r.error})` : `${r.moved} moved, ${r.inUse} in use, ${r.inTarget} already there, ${r.missing} gone`}`).join("; ") +
+        (reloads.length ? `; accounts reloaded in ${reloads.map((r) => `${r.stack}${r.error ? ` (failed: ${r.error})` : ""}`).join(", ")}` : ""),
+    );
+    return c.json({ results, reloads });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
@@ -2133,6 +2228,23 @@ async function collectAreaStats(golbat: { url: string; headers: Record<string, s
   });
   return { checkedAt: Date.now(), areas, totals: sumStats(areas.flatMap((x) => (x.stats ? [x.stats] : []))) };
 }
+
+// ---- Each Dragonite's database ([database] + [stack.dragonite] database) ----
+
+/** Whether each Dragonite's database can be read: the sidebar's database mark. Checked at most every 30 s. */
+app.get("/api/dragonite-db", async (c) => {
+  const db = cfg.database;
+  const out: DragoniteDbCheck[] = await Promise.all(
+    cfg.dragonite
+      .filter((d) => db && d.database)
+      .map(async (d) => {
+        // Reading its account table, which every Dragonite database has.
+        const check = await cachedVm(`dragonite-db:check:${d.id}`, 30_000 * 240, () => dbCheck(db!, d.database!, "SELECT 1 FROM account LIMIT 1", "Dragonite"));
+        return { id: d.id, name: d.name, ...check };
+      }),
+  );
+  return c.json(out);
+});
 
 // ---- Golbat's database ([database] + [golbat] database) ----
 

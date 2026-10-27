@@ -61,6 +61,9 @@ password = "change-this-password"
 #                    charts without Zapdos (the admin does not serve /metrics).
 #   api_secret       (optional) Sent as X-Dragonite-Admin-Secret.
 #   zapdos_instance  (optional) Its `instance` label in Zapdos, for the charts.
+#   database         (optional) Its database on the [database] server. A DB
+#                    pill shows next to Dragonite in the sidebar. RotomNG has
+#                    no database.
 #
 # Both also take, when there is a proxy in front:
 #   headers     = { "CF-Access-Client-Id" = "...", "CF-Access-Client-Secret" = "..." }
@@ -72,6 +75,7 @@ name = "Alpha"
 [stack.dragonite]
 url = "http://10.0.0.10:7272"
 zapdos_instance = "dragonite-alpha"
+# database = "dragonite_alpha"
 
 [stack.rotom]
 url = "http://10.0.0.10:7072"
@@ -84,6 +88,7 @@ name = "Beta"
 [stack.dragonite]
 url = "http://10.0.0.11:7272"
 zapdos_instance = "dragonite-beta"
+# database = "dragonite_beta"
 
 [stack.rotom]
 url = "http://10.0.0.11:7072"
@@ -99,9 +104,8 @@ zapdos_instance = "rotom-beta"
 #                        their last 24 h (at least "5m"; each take asks Golbat
 #                        about every area). Leave it out for no history.
 #   database             (optional) Golbat's database on the [database] server:
-#                        the Spawnpoints page (every spawnpoint in each
-#                        Dragonite area, on a map). A database mark shows in
-#                        Golbat's pill in the sidebar.
+#                        the Spawnpoints and Encounters pages. A DB pill shows
+#                        next to Golbat in the sidebar.
 # [golbat]
 # url = "http://10.0.0.20:9001"
 # api_secret = "..."
@@ -111,11 +115,17 @@ zapdos_instance = "rotom-beta"
 
 # ─── Database (optional) ─────────────────────────────────────────────────────
 
-# The MariaDB server of the stack. Each part names its own database on it
-# (for now [golbat] database). Reading needs only SELECT:
-#   GRANT SELECT ON golbat.* TO 'nacli'@'%' IDENTIFIED BY '...';
+# The MariaDB server of the stack. Each part names its own database on it:
+# database in [golbat] and in each [stack.dragonite]. Give Nacli an account of
+# its own; reading needs only SELECT on each of those databases:
+#   CREATE USER 'nacli'@'%' IDENTIFIED BY '...';
+#   GRANT SELECT ON golbat.* TO 'nacli'@'%';
+#   GRANT SELECT ON dragonite_alpha.* TO 'nacli'@'%';
 # The Spawnpoints tool that deletes spawnpoints also needs DELETE on that table:
 #   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';
+# Moving accounts between stacks (Accounts › Move) needs, in each Dragonite database:
+#   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';
+# The Help page (user menu, top right) walks through every step.
 # [database]
 # host = "10.0.0.40"
 # port = 3306

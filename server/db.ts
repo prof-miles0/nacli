@@ -46,7 +46,7 @@ export function closeDbPools() {
  * What went wrong, in words fit for the browser: the driver's own messages
  * name the server's address, which must not leave Nacli.
  */
-export function dbError(e: unknown, name: string): string {
+export function dbError(e: unknown, name: string, part = "Golbat"): string {
   const code = (e as { code?: string }).code ?? "";
   switch (code) {
     case "ECONNREFUSED":
@@ -58,30 +58,41 @@ export function dbError(e: unknown, name: string): string {
     case "EAI_AGAIN":
       return "the database host cannot be found";
     case "ER_ACCESS_DENIED_ERROR":
-    case "ER_DBACCESS_DENIED_ERROR":
       return "access denied: check username and password in [database]";
+    case "ER_DBACCESS_DENIED_ERROR":
+      // MariaDB says the same whether the database is missing or not granted.
+      return `the [database] user cannot use "${name}" (does it exist, with SELECT granted on it?)`;
     case "ER_TABLEACCESS_DENIED_ERROR":
     case "ER_COLUMNACCESS_DENIED_ERROR":
       return `the [database] user cannot read "${name}" (needs SELECT on it)`;
     case "ER_BAD_DB_ERROR":
       return `no database named "${name}"`;
     case "ER_NO_SUCH_TABLE":
-      return `"${name}" is missing a table Nacli reads (is it Golbat's database?)`;
+      return `"${name}" is missing a table Nacli reads (is it ${part}'s database?)`;
     default:
       return code ? `database error (${code})` : "database error";
   }
 }
 
+const DENIED = new Set(["ER_DBACCESS_DENIED_ERROR", "ER_TABLEACCESS_DENIED_ERROR", "ER_COLUMNACCESS_DENIED_ERROR", "ER_BAD_DB_ERROR", "ER_NO_SUCH_TABLE"]);
+
 /**
  * Whether the database can be read, and how fast: `probe` is a query on a
  * table Nacli needs, so a user that connects but may not read it fails too.
  */
-export async function dbCheck(db: DatabaseConfig, name: string, probe = "SELECT 1"): Promise<{ ok: boolean; ms?: number; error?: string }> {
+export async function dbCheck(
+  db: DatabaseConfig,
+  name: string,
+  probe = "SELECT 1",
+  part?: string,
+): Promise<{ ok: boolean; ms?: number; error?: string; denied?: boolean }> {
   const started = Date.now();
   try {
     await dbPool(db, name).query({ sql: probe, timeout: 8000 });
     return { ok: true, ms: Date.now() - started };
   } catch (e) {
-    return { ok: false, error: dbError(e, name) };
+    // The server answers and takes the login, but not this database or its tables.
+    const denied = DENIED.has((e as { code?: string }).code ?? "");
+    return { ok: false, error: dbError(e, name, part), ...(denied ? { denied } : {}) };
   }
 }

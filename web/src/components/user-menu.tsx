@@ -1,6 +1,7 @@
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, LogOut, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
+import { ChevronDown, CircleHelp, LogOut, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { type Theme, useTheme } from "@/lib/theme";
 import { cn, fmt } from "@/lib/utils";
 import { useAuth } from "./auth";
@@ -38,7 +39,7 @@ function useLastUpdate(active: boolean) {
   return last || undefined;
 }
 
-/** Top-right menu, as in Dragonite's admin: the session, the theme and logout. */
+/** Top-right menu, as in Dragonite's admin: the session, the theme, help and logout. */
 export function UserMenu() {
   const { username, logout } = useAuth();
   const [theme, setTheme] = useTheme();
@@ -118,6 +119,11 @@ export function UserMenu() {
             ))}
           </div>
           <div role="separator" className="-mx-1 my-1 h-px bg-border" />
+          {/* How to connect each part of the stack, and the database account's permissions. */}
+          <Link to="/help" role="menuitem" onClick={() => setOpen(false)} className={itemClass}>
+            <CircleHelp />
+            Help
+          </Link>
           <button type="button" role="menuitem" onClick={logout} className={itemClass}>
             <LogOut />
             Sign out

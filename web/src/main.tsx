@@ -11,6 +11,7 @@ import { DashboardPage } from "@/pages/dashboard";
 import { DevicesPage } from "@/pages/devices";
 import { DragoniteAccountsPage } from "@/pages/dragonite-accounts";
 import { DragoniteAreasPage } from "@/pages/dragonite-areas";
+import { HelpPage } from "@/pages/help";
 import { DragoniteModesPage } from "@/pages/dragonite-modes";
 import { DragoniteProxiesPage } from "@/pages/dragonite-proxies";
 import { DragoniteSchedulerPage } from "@/pages/dragonite-scheduler";
@@ -72,6 +73,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/golbat/spawnpoints" element={<Only when={golbatSpawnpoints}><GolbatSpawnpointsPage /></Only>} />
                 <Route path="/golbat/encounters" element={<Only when={golbatDb}><GolbatEncountersPage /></Only>} />
                 <Route path="/golbat/metrics" element={<Only when={golbat}><GolbatMetricsPage /></Only>} />
+                <Route path="/help" element={<HelpPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

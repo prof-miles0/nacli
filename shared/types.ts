@@ -208,7 +208,7 @@ export interface AppInfo {
   map?: { styleUrl?: string; styleUrlDark?: string; tilesUrl?: string; cartoKey?: string; attribution: string };
   /** Configured Dragonites (empty without [[dragonite]] + [zapdos]). */
   dragonite: DragoniteInfo[];
-  /** Instances whose charts come from Zapdos but that sent nothing in the last hour: Zapdos may have stopped scraping them. */
+  /** Instances whose charts come from Zapdos but that sent nothing in the last 30 minutes: Zapdos may have stopped scraping them. */
   zapdosQuiet: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string }[];
   /** Dragonites whose metrics arrive but that handled no location in the last hour. */
   dragoniteIdle: { id: string; name: string }[];
@@ -220,6 +220,8 @@ export interface AppInfo {
   golbatStatsHistoryMs?: number;
   /** [database] and [golbat] database are set: Golbat's database can be read. */
   golbatDb: boolean;
+  /** Names from config.toml for the Help page's grants: the [database] user and each database. Never the host or password. */
+  databases: { user?: string; golbat?: string; dragonite: { name: string; database: string }[] };
   /** That, plus a Dragonite API for the areas: the Spawnpoints page. */
   golbatSpawnpoints: boolean;
   instances: InstanceInfo[];
@@ -298,6 +300,19 @@ export interface DragoniteInfo {
   historyMs: number;
   /** Its charts come from Zapdos (else from memory). */
   fromVm: boolean;
+  /** Its database is set ([database] + database in [stack.dragonite]). */
+  database: boolean;
+}
+
+/** Whether Nacli can read a Dragonite's database (sidebar mark). */
+export interface DragoniteDbCheck {
+  id: string;
+  name: string;
+  ok: boolean;
+  ms?: number;
+  error?: string;
+  /** The server takes the login but not this database or its tables (else: unreachable or login refused). */
+  denied?: boolean;
 }
 
 export interface DragoniteMeta {
@@ -396,6 +411,13 @@ export interface DragoniteAccount {
   consecutive_disabled: number | null;
   /** The stack (Dragonite id) it belongs to, in the combined list. */
   stack?: string;
+}
+
+/** How a move of accounts to another stack went, per stack they came from. */
+export interface AccountMoveResult {
+  results: { stack: string; moved: number; inUse: number; inTarget: number; missing: number; error?: string }[];
+  /** The Dragonites told to reload their accounts (sources with moves, then the target). */
+  reloads: { stack: string; error?: string }[];
 }
 
 export interface DragoniteAccountPage {
@@ -928,7 +950,7 @@ export interface SystemStatus {
     local: boolean;
     health?: { ok: boolean; latencyMs?: number; error?: string };
     /** Each instance with a zapdos_instance: whether Zapdos has its data (unknown before the first check). */
-    /** quiet: data in Zapdos, but none in the last hour. */
+    /** quiet: data in Zapdos, but none in the last 30 minutes. */
     instances: { kind: "rotom" | "dragonite" | "golbat"; name: string; zapdosInstance: string; hasData?: boolean; quiet?: boolean }[];
   };
   /** RotomNG on GitHub: newest stable and newest of all (pre-releases included). */

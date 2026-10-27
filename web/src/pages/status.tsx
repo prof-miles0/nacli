@@ -520,7 +520,7 @@ function ZapdosCard({ z }: { z: SystemStatus["zapdos"] }) {
                       value={x.hasData === undefined ? "Checking…" : x.quiet ? "Quiet" : x.hasData ? "Data" : "No data"}
                       detail={
                         x.quiet ? (
-                          <span title={`Data as “${x.zapdosInstance}”, but none in the last hour: check that Zapdos still scrapes it`}>Nothing in the last hour</span>
+                          <span title={`Data as “${x.zapdosInstance}”, but none in the last 30 minutes: check that Zapdos still scrapes it`}>Nothing in the last 30 minutes</span>
                         ) : x.hasData === false ? (
                           <span title={`Nothing as “${x.zapdosInstance}” in the last 30 days`}>Charts from memory</span>
                         ) : undefined
