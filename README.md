@@ -37,7 +37,7 @@ them. Lists span every stack at once, each stack keeps its colour everywhere, an
 modes, schedules and proxies can be copied from one stack to another.
 
 <p align="center">
-  <img src="docs/stack.svg" alt="Nacli in front of several Dragonite + RotomNG stacks, plus the shared Golbat and Zapdos" width="820">
+  <img src="docs/stack.svg" alt="Nacli in front of several Dragonite + RotomNG stacks, the shared Golbat and Zapdos, and the MariaDB server with Golbat's and each Dragonite's database" width="820">
 </p>
 
 **Nothing is required.** Every part is optional, and Nacli shows the pages that what you give
@@ -111,8 +111,9 @@ the server; the browser only ever talks to Nacli.
 
 - **Charts without Zapdos**: whatever Zapdos does not cover is kept in memory and saved to
   disk, so a restart keeps the last 24 h.
-- **A database connection**: one MariaDB account with read access to Golbat's database and
-  each Dragonite's, with a DB pill per part in the sidebar.
+- **A database connection**: one MariaDB account for Golbat's database and each Dragonite's,
+  granted only the tables and actions you use (reads, plus deleting spawnpoints and moving
+  accounts), with a DB pill per part in the sidebar.
 - **Help** in the user menu: how to connect every part of the stack, the database account's
   permissions, and what the running `config.toml` has connected.
 - Light and dark themes, and a layout made for phones too.
@@ -230,8 +231,8 @@ reports (with its `url`), so the stack's `name` can be anything.
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
   controls act on that Dragonite. `database` (optional, needs `[database]`) names its
-  database on that server; a DB pill next to Dragonite in the sidebar shows whether each one
-  can be read. RotomNG has no database.
+  database on that server, used to move accounts between stacks; a DB pill next to Dragonite
+  in the sidebar shows whether each one can be read. RotomNG has no database.
 
 `zapdos_instance` is each instance's `instance` label in Zapdos, and it only counts
 with `[zapdos]` (see below).
@@ -266,26 +267,39 @@ To connect it:
 
 1. Make MariaDB reachable from Nacli: its `bind-address` must not be only `127.0.0.1` when
    Nacli runs on another host or in Docker, and port 3306 must be open from Nacli's host.
-2. Give Nacli an account of its own (not Golbat's or Dragonite's) with these permissions:
+2. Give Nacli an account of its own (not Golbat's or Dragonite's). Nacli **reads and
+   writes** in these databases, but only touches three tables, so grant table by table and
+   only for the features you use:
+
+   | Database | Table | Grant | For | Without it |
+   |---|---|---|---|---|
+   | Golbat | `spawnpoint` | `SELECT` | Spawnpoints page, spawnpoint backup, DB pill | No Spawnpoints page; the pill turns orange |
+   | Golbat | `pokemon_area_stats` | `SELECT` | Encounters page | No Encounters history |
+   | Golbat | `spawnpoint` | `DELETE` | Deleting spawnpoints (Spawnpoints › Delete) | The delete tool refuses |
+   | Each Dragonite | `account` | `SELECT` | DB pill, moving accounts | The pill turns orange |
+   | Each Dragonite | `account` | `INSERT`, `DELETE` | Moving accounts between stacks (Accounts › Move) | Moving refuses, nothing changes |
+
+   For example, with everything (leave out the lines you don't need):
 
    ```sql
    CREATE USER 'nacli'@'%' IDENTIFIED BY 'a-long-random-password';  -- or 'nacli'@'<Nacli's IP>'
-   GRANT SELECT ON golbat.* TO 'nacli'@'%';            -- Spawnpoints and Encounters
-   GRANT SELECT ON dragonite_alpha.* TO 'nacli'@'%';   -- each Dragonite with a database
-   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';   -- optional: the delete tool only
-   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';  -- optional: moving accounts, each Dragonite
+
+   -- Golbat
+   GRANT SELECT ON golbat.spawnpoint TO 'nacli'@'%';
+   GRANT SELECT ON golbat.pokemon_area_stats TO 'nacli'@'%';
+   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';                    -- deleting spawnpoints
+
+   -- Each Dragonite with a database
+   GRANT SELECT ON dragonite_alpha.account TO 'nacli'@'%';
+   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';      -- moving accounts
    ```
 
-   | Database | Grant | Tables read | For |
-   |---|---|---|---|
-   | Golbat | `SELECT` | `spawnpoint`, `pokemon_area_stats` | Spawnpoints, Encounters, the spawnpoint backup |
-   | Golbat | `DELETE` on `spawnpoint` | — | Only the tool that deletes spawnpoints (it refuses without it) |
-   | Each Dragonite | `SELECT` | `account` | The connection check, and moving accounts |
-   | Each Dragonite | `INSERT`, `DELETE` on `account` | — | Only moving accounts between stacks (it refuses without them) |
-
-   Nothing else in Nacli ever writes to the database.
+   Nacli never creates, alters or drops tables, and never writes to any other table. Moving
+   accounts copies each row to the other Dragonite's `account` table and deletes it from the
+   first in one transaction, so a failure leaves both as they were.
 3. Add `[database]` and the `database` names to `config.toml` and save. The DB pills in the
-   sidebar turn green, or red with the reason on hover.
+   sidebar turn green; orange when the server answers but a database or table is not granted
+   (or missing), red when it cannot be reached. Hover for the reason, click for the Help step.
 
 The **Help** page (user menu, top right) walks through connecting every part of the stack,
 with these permissions, and lists what the running `config.toml` has connected.
@@ -348,7 +362,7 @@ flowchart LR
     N -- "API" --> D1 & D2
     N -- "status, actions" --> R1 & R2
     N -- "devices, statistics" --> G["Golbat"]
-    N -- "read-only SQL" --> M[("MariaDB<br/>(Golbat + Dragonite DBs)")]
+    N -- "SQL: reads, and writes for deleting spawnpoints and moving accounts" --> M[("MariaDB<br/>(Golbat + Dragonite DBs)")]
     N -- "PromQL" --> V[("Zapdos<br/>(VictoriaMetrics)")]
     N -. "release checks" .-> GH["GitHub"]
 ```

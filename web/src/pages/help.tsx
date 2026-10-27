@@ -109,20 +109,27 @@ function grants(app?: AppInfo) {
   const to = `'${user.replace(/'/g, "''")}'@'%'`;
   const golbat = ident(d?.golbat || "golbat");
   const dbs = d?.dragonite.length ? d.dragonite : [{ name: "", database: "dragonite" }];
-  const per = (sql: (db: string) => string) => dbs.map((x) => `${sql(ident(x.database))}${x.name ? `  -- ${x.name}` : ""}`).join("\n");
-  const dragonite = per((db) => `GRANT SELECT ON ${db}.* TO ${to};`);
+  /** One line per Dragonite database, its stack's name (and a note) after. */
+  const per = (sql: (db: string) => string, note?: string) =>
+    dbs
+      .map((x) => {
+        const after = [x.name, note].filter(Boolean).join(", ");
+        return `${sql(ident(x.database))}${after ? `  -- ${after}` : ""}`;
+      })
+      .join("\n");
   return {
     filled: !!(d?.user || d?.golbat || d?.dragonite.length),
     user,
     sql: `CREATE USER ${to} IDENTIFIED BY 'a-long-random-password';
 
--- Golbat: Spawnpoints and Encounters
-GRANT SELECT ON ${golbat}.* TO ${to};
+-- Golbat
+GRANT SELECT ON ${golbat}.spawnpoint TO ${to};            -- Spawnpoints, DB pill
+GRANT SELECT ON ${golbat}.pokemon_area_stats TO ${to};    -- Encounters
+GRANT DELETE ON ${golbat}.spawnpoint TO ${to};            -- optional: deleting spawnpoints
 
 -- Each Dragonite with a database in config.toml
-${dragonite}`,
-    del: `GRANT DELETE ON ${golbat}.spawnpoint TO ${to};`,
-    move: per((db) => `GRANT INSERT, DELETE ON ${db}.account TO ${to};`),
+${per((db) => `GRANT SELECT ON ${db}.account TO ${to};`)}
+${per((db) => `GRANT INSERT, DELETE ON ${db}.account TO ${to};`, "optional: moving accounts")}`,
   };
 }
 
@@ -278,73 +285,91 @@ password = "..."`}</Code>
 
       <Step n={6} id="permissions" title="Database permissions">
         <p>
-          <b>Reading is all Nacli needs</b>, so the account gets <C>SELECT</C> on each database it reads. Replace <C>'%'</C> with Nacli's IP to
-          accept it only from there{g.filled ? "." : ", and the database names with yours."}
+          <b>Nacli reads and writes</b>, but only touches three tables. Grant them table by table, and only for the features you use: what
+          each one is for, and what happens without it.
         </p>
-        {g.filled ? (
-          <p className="text-xs text-muted-foreground">Filled in with the user and databases in this config.toml; the rest are examples.</p>
-        ) : null}
-        <Code>{g.sql}</Code>
-        <p>
-          <b>Optional:</b> the Spawnpoints tool that deletes spawnpoints also needs <C>DELETE</C> on that one table. Without it the tool refuses.
-        </p>
-        <Code>{g.del}</Code>
-        <p>
-          <b>Optional:</b> moving accounts from one stack to another (Accounts › Move) takes their rows out of one Dragonite's{" "}
-          <C>account</C> table and into the other's, so it needs <C>INSERT</C> and <C>DELETE</C> on <C>account</C> in every Dragonite
-          database. Without them the move refuses. Nothing else in Nacli writes to the database.
-        </p>
-        <Code>{g.move}</Code>
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-xs">
             <thead className="bg-muted/40 text-left text-[11px] tracking-wide text-muted-foreground uppercase">
               <tr>
                 <th className="px-3 py-1.5 font-medium">Database</th>
+                <th className="px-3 py-1.5 font-medium">Table</th>
                 <th className="px-3 py-1.5 font-medium">Grant</th>
-                <th className="px-3 py-1.5 font-medium">Tables read</th>
                 <th className="px-3 py-1.5 font-medium">For</th>
+                <th className="px-3 py-1.5 font-medium">Without it</th>
               </tr>
             </thead>
             <tbody className="[&_td]:px-3 [&_td]:py-1.5 [&_tr]:border-t">
               <tr>
                 <td>Golbat</td>
                 <td>
-                  <C>SELECT</C>
+                  <C>spawnpoint</C>
                 </td>
                 <td>
-                  <C>spawnpoint</C>, <C>pokemon_area_stats</C>
+                  <C>SELECT</C>
                 </td>
-                <td>Spawnpoints, Encounters, the spawnpoint backup</td>
+                <td>Spawnpoints page, spawnpoint backup, DB pill</td>
+                <td className="text-muted-foreground">No Spawnpoints page; the pill turns orange</td>
               </tr>
               <tr>
                 <td>Golbat</td>
                 <td>
-                  <C>DELETE</C> on <C>spawnpoint</C>
+                  <C>pokemon_area_stats</C>
                 </td>
-                <td>—</td>
-                <td>Only the delete tool (optional)</td>
-              </tr>
-              <tr>
-                <td>Each Dragonite</td>
                 <td>
                   <C>SELECT</C>
                 </td>
+                <td>Encounters page</td>
+                <td className="text-muted-foreground">No Encounters history</td>
+              </tr>
+              <tr>
+                <td>Golbat</td>
                 <td>
-                  <C>account</C> (the connection check)
+                  <C>spawnpoint</C>
                 </td>
-                <td>The connection check, the accounts list for a move</td>
+                <td>
+                  <C>DELETE</C>
+                </td>
+                <td>Deleting spawnpoints (Spawnpoints › Delete)</td>
+                <td className="text-muted-foreground">The delete tool refuses</td>
               </tr>
               <tr>
                 <td>Each Dragonite</td>
                 <td>
-                  <C>INSERT</C>, <C>DELETE</C> on <C>account</C>
+                  <C>account</C>
                 </td>
-                <td>—</td>
-                <td>Only moving accounts between stacks (optional)</td>
+                <td>
+                  <C>SELECT</C>
+                </td>
+                <td>DB pill, moving accounts</td>
+                <td className="text-muted-foreground">The pill turns orange</td>
+              </tr>
+              <tr>
+                <td>Each Dragonite</td>
+                <td>
+                  <C>account</C>
+                </td>
+                <td>
+                  <C>INSERT, DELETE</C>
+                </td>
+                <td>Moving accounts between stacks (Accounts › Move)</td>
+                <td className="text-muted-foreground">Moving refuses, nothing changes</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p>
+          With everything; leave out the lines you don't need. Replace <C>'%'</C> with Nacli's IP to accept it only from there
+          {g.filled ? "." : ", and the database names with yours."}
+        </p>
+        {g.filled ? (
+          <p className="text-xs text-muted-foreground">Filled in with the user and databases in this config.toml; the rest are examples.</p>
+        ) : null}
+        <Code>{g.sql}</Code>
+        <p>
+          Nacli never creates, alters or drops tables, and never writes to any other table. Moving accounts copies each row to the other
+          Dragonite's <C>account</C> table and deletes it from the first in one transaction, so a failure leaves both as they were.
+        </p>
         <p>
           To check the account from Nacli's host: <C>{`mariadb -h 10.0.0.40 -u ${g.user} -p -e "SHOW GRANTS"`}</C>.
         </p>

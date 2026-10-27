@@ -117,14 +117,13 @@ zapdos_instance = "rotom-beta"
 
 # The MariaDB server of the stack. Each part names its own database on it:
 # database in [golbat] and in each [stack.dragonite]. Give Nacli an account of
-# its own; reading needs only SELECT on each of those databases:
+# its own. It reads and writes, but only these tables: grant just what you use.
 #   CREATE USER 'nacli'@'%' IDENTIFIED BY '...';
-#   GRANT SELECT ON golbat.* TO 'nacli'@'%';
-#   GRANT SELECT ON dragonite_alpha.* TO 'nacli'@'%';
-# The Spawnpoints tool that deletes spawnpoints also needs DELETE on that table:
-#   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';
-# Moving accounts between stacks (Accounts › Move) needs, in each Dragonite database:
-#   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';
+#   GRANT SELECT ON golbat.spawnpoint TO 'nacli'@'%';             -- Spawnpoints, DB pill
+#   GRANT SELECT ON golbat.pokemon_area_stats TO 'nacli'@'%';     -- Encounters
+#   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';             -- deleting spawnpoints
+#   GRANT SELECT ON dragonite_alpha.account TO 'nacli'@'%';       -- each Dragonite: DB pill, moving
+#   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';  -- moving accounts
 # The Help page (user menu, top right) walks through every step.
 # [database]
 # host = "10.0.0.40"

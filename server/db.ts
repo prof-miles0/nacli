@@ -1,6 +1,6 @@
 // The stack's MariaDB ([database] in config.toml): one small pool per database
-// on it (Golbat's for now), rebuilt when the server or its credentials change.
-// Every query here only reads.
+// on it (Golbat's and each Dragonite's), rebuilt when the server or its
+// credentials change. Every query here only reads.
 
 import mysql, { type Pool } from "mysql2/promise";
 import type { DatabaseConfig } from "./config.ts";
