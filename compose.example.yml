@@ -10,6 +10,7 @@
 
 services:
   nacli:
+    # :latest follows main; pin a release with :1 (any 1.x) or :1.0.0.
     image: ghcr.io/prof-miles0/nacli:latest
     container_name: nacli
     restart: unless-stopped

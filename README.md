@@ -68,7 +68,7 @@ the server; the browser only ever talks to Nacli.
 
 | Page | What you can do |
 |---|---|
-| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state. Add one account or import a CSV. Move accounts to another stack: tick them, or pick how many available ones; their rows go from one Dragonite database to the other and both Dragonites reload their accounts (needs a `database` in both, and the grants below). |
+| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state, and the free accounts also by token and provider. Add one account or import a CSV. Move accounts to another stack: tick them, or pick how many available ones; their rows go from one Dragonite database to the other and both Dragonites reload their accounts (needs a `database` in both, and the grants below). |
 | **Areas** | Every area with its live workers. Create, view and edit them (with a map, routes from [Kōji](https://github.com/TurtIeSocks/Koji), every mode), enable or disable them, start or stop quests, and copy or move them between stacks. |
 | **Unbound Modes** | Level, Invasion and Scout modes: create, edit, delete and copy them; scout jobs on a map and the scout queue. |
 | **Proxies** | Every stack's proxies in one list: add one or import many, copy them to other stacks, enable, disable or delete them. |
@@ -155,7 +155,7 @@ docker compose up -d
 |---|---|
 | `latest`, `main` | The latest build of the `main` branch |
 | `sha-<commit>` | That exact commit |
-| `1.2.3`, `1.2` | A `v1.2.3` release tag |
+| `1.2.3`, `1.2`, `1` | A `v1.2.3` release, and the latest of its minor and major version |
 
 > [!NOTE]
 > **Edit `config.toml` without restarting.** With the `config` folder mounted, as above,
