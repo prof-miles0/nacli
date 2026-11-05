@@ -385,12 +385,15 @@ export function evaluate(node: Node, src: SeriesSource, t: number): Val {
         }
       };
       if (a.k === "scalar" && b.k === "scalar") return { k: "scalar", v: apply(a.v, b.v) };
+      // As in VictoriaMetrics: a NaN result (0/0, an area that saw nothing) is
+      // no sample at all, so avg() and the rest skip it instead of turning NaN.
+      const real = (s: Sample[]) => s.filter((x) => !Number.isNaN(x.v));
       if (a.k === "vector" && b.k === "scalar") {
         return {
           k: "vector",
           s: cmp
             ? a.s.filter((x) => apply(x.v, b.v))
-            : a.s.map((x) => ({ labels: withoutName(x.labels), v: apply(x.v, b.v) })),
+            : real(a.s.map((x) => ({ labels: withoutName(x.labels), v: apply(x.v, b.v) }))),
         };
       }
       if (a.k === "scalar" && b.k === "vector") {
@@ -398,7 +401,7 @@ export function evaluate(node: Node, src: SeriesSource, t: number): Val {
           k: "vector",
           s: cmp
             ? b.s.filter((x) => apply(a.v, x.v))
-            : b.s.map((x) => ({ labels: withoutName(x.labels), v: apply(a.v, x.v) })),
+            : real(b.s.map((x) => ({ labels: withoutName(x.labels), v: apply(a.v, x.v) }))),
         };
       }
       // Vector with vector: one-to-one on every label but the metric name.
@@ -411,7 +414,7 @@ export function evaluate(node: Node, src: SeriesSource, t: number): Val {
           if (apply(x.v, y)) out.push(x);
         } else out.push({ labels: withoutName(x.labels), v: apply(x.v, y) });
       }
-      return { k: "vector", s: out };
+      return { k: "vector", s: real(out) };
     }
   }
 }

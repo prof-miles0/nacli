@@ -308,6 +308,13 @@ const app = new Hono<Env>();
 // JSON answers can be large (an area's spawnpoints are hundreds of KB): gzip
 // them. Binary downloads, the already-gzipped backup and small answers are left as they are.
 app.use("/api/*", compress());
+// Proxies in front of Nacli, such as Cloudflare, put their own error page in
+// place of a 502 or 504 body, and the message would never reach the page. A
+// part of the stack that fails is answered as 500, which they pass on as is.
+app.use("/api/*", async (c, next) => {
+  await next();
+  if (c.res.status === 502 || c.res.status === 504) c.res = new Response(c.res.body, { status: 500, headers: c.res.headers });
+});
 
 function clientIp(c: Context): string {
   const fwd = c.req.header("x-forwarded-for");

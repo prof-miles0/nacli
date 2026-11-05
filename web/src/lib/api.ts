@@ -78,7 +78,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const type = res.headers.get("content-type") ?? "";
   const body = type.includes("json") ? await res.json() : await res.text();
   if (!res.ok) {
-    const msg = typeof body === "object" && body ? (body.error ?? body.message) : body;
+    // An HTML page here is a proxy's in front of Nacli (Nacli answers JSON): its status only.
+    const page = typeof body === "string" && /^\s*</.test(body);
+    const msg = page ? `HTTP ${res.status} from a proxy in front of Nacli` : typeof body === "object" && body ? (body.error ?? body.message) : body;
     throw new ApiError(String(msg || `HTTP ${res.status}`), res.status);
   }
   return body as T;

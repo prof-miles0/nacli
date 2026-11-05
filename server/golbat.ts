@@ -22,7 +22,9 @@ export const GOLBAT_PANELS: PanelDef[] = [
     queries: [
       {
         legend: "TTL",
-        expr: `avg(avg(increase(golbat_verified_pokemon_ttl{$sel,type="encounter",above30="0"}[$inter]), increase(golbat_verified_pokemon_ttl{$sel,type="encounter",above30="1"}[$inter])) / avg(increase(golbat_verified_pokemon_ttl_counter{$sel,type="encounter",above30="0"}[$inter]), increase(golbat_verified_pokemon_ttl_counter{$sel,type="encounter",above30="1"}[$inter])))`,
+        // Both spawn lengths together, weighted by how many of each were seen. Plain
+        // PromQL: Grafana's avg(a, b) is MetricsQL only, and memory speaks PromQL.
+        expr: `sum(increase(golbat_verified_pokemon_ttl{$sel,type="encounter",above30=~"0|1"}[$inter])) / sum(increase(golbat_verified_pokemon_ttl_counter{$sel,type="encounter",above30=~"0|1"}[$inter]))`,
       },
       {
         legend: "TTL 30m",
