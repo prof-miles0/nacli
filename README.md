@@ -83,7 +83,7 @@ the server; the browser only ever talks to Nacli.
 ### 📱 Rotom
 
 - **Instances**, **Devices**, **Workers**, **Jobs** and **Metrics** for every RotomNG at once.
-- Device actions (restart, reboot, logcat…), controller actions and jobs.
+- Device actions (restart, reboot, logcat…), removing offline devices, controller actions and jobs.
 
 ### 🦇 Golbat
 
