@@ -1,13 +1,15 @@
-import { ChevronRight } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ChevronRight, Trash2 } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Device, Tagged } from "@shared/types";
 import { ActionsMenu, DEVICE_ACTIONS, useNotify } from "@/components/actions";
 import { FilterMenu } from "@/components/filter-menu";
 import { matches, SearchBox, useSorted } from "@/components/table-tools";
-import { Badge, Dot, Empty, HoverCard, Spinner, Table } from "@/components/ui";
+import { Badge, Button, Dot, Empty, HoverCard, Modal, Spinner, Table } from "@/components/ui";
 import { StatusDot, type StatusTone } from "@/components/status-dot";
 import { splitWorkerId, WorkerName } from "./workers";
+import { endpoints } from "@/lib/api";
 import { useInstances, useInstanceColor, useStatus } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
 
@@ -53,6 +55,28 @@ export function DevicesPage() {
   }, [target, targetFound, targetWorker]);
   const { notify, node } = useNotify();
   const { visible } = useInstances();
+  const qc = useQueryClient();
+  // The instance whose offline devices are about to be removed.
+  const [removing, setRemoving] = useState<{ id: string; name: string }>();
+  const [busy, setBusy] = useState(false);
+  // Every offline device of an instance, whatever the search or filter shows:
+  // RotomNG removes them all at once.
+  const offline = (id?: string) => (data?.devices ?? []).filter((d) => d.instanceId === id && !d.is_connected);
+
+  const removeOffline = async () => {
+    if (!removing) return;
+    setBusy(true);
+    try {
+      const r = await endpoints.rotom<{ devices_count?: number }>(removing.id, "/device/_/action/delete", { method: "PUT" });
+      notify({ text: `${removing.name}: ${r.devices_count ?? 0} offline devices removed` });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["status"] }), 1200);
+    } catch (e) {
+      notify({ text: `Remove offline devices: ${(e as Error).message}`, error: true });
+    } finally {
+      setBusy(false);
+      setRemoving(undefined);
+    }
+  };
 
   const searched = (data?.devices ?? []).filter((d) => matches(q, d.origin, d.id, d.instanceName, d.version));
   const rows = searched.filter((d) => !filter || STATES.find((s) => s.value === filter)!.test(d));
@@ -108,7 +132,7 @@ export function DevicesPage() {
       ) : (
         groups.map((g) => (
           <section key={g.id} className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 px-1">
+            <div className="flex flex-wrap items-center gap-2 px-1">
               <Dot color={color(g.id)} />
               <h2 className="font-semibold">{g.name}</h2>
               <span className="text-xs text-muted-foreground tabular-nums">
@@ -116,6 +140,12 @@ export function DevicesPage() {
                 {g.rows.reduce((a, d) => a + d.worker_in_use_count, 0)}/
                 {g.rows.reduce((a, d) => a + d.worker_count, 0)} workers in use
               </span>
+              {offline(g.id).length ? (
+                <Button size="sm" variant="ghost" className="ml-auto text-red-400" onClick={() => setRemoving({ id: g.id, name: g.name })}>
+                  <Trash2 />
+                  Remove offline ({offline(g.id).length})
+                </Button>
+              ) : null}
             </div>
             {g.rows.length === 0 ? (
               <div className="rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground">
@@ -225,6 +255,33 @@ export function DevicesPage() {
           </section>
         ))
       )}
+      <Modal
+        open={!!removing}
+        onClose={() => setRemoving(undefined)}
+        title={`Remove offline devices · ${removing?.name}`}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRemoving(undefined)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" loading={busy} onClick={removeOffline}>
+              Remove
+            </Button>
+          </>
+        }
+      >
+        <p className="text-muted-foreground">
+          RotomNG forgets every device that is not connected. One that connects again is listed again.
+        </p>
+        <ul className="mt-3 flex flex-col gap-1 text-sm">
+          {offline(removing?.id).map((d) => (
+            <li key={d.id} className="flex justify-between gap-3">
+              <span className="truncate font-medium">{d.origin || d.id}</span>
+              <span className="whitespace-nowrap text-muted-foreground">seen {fmt.ago(d.last_seen_at_ms)}</span>
+            </li>
+          ))}
+        </ul>
+      </Modal>
       {node}
     </div>
   );
