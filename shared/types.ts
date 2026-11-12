@@ -194,7 +194,30 @@ export interface MeResponse {
   title: string;
 }
 
+/** A device the watchdog restarted (or, in dry_run, would have). */
+export interface WatchdogEvent {
+  /** When (ms). */
+  t: number;
+  /** The [[stack]] name, and its RotomNG's id. */
+  stack: string;
+  instanceId: string;
+  deviceId: string;
+  /** Its name in Rotom (origin). */
+  device: string;
+  action: "restart" | "reboot";
+  /** Why, in words: "no worker connected for 12 min". */
+  reason: string;
+  /** dry_run: nothing was done. */
+  dryRun?: boolean;
+  /** Rotom refused it, or did not answer. */
+  error?: string;
+}
+
 export interface AppInfo {
+  /** The [[discord]] webhooks and what each posts (never their URLs). */
+  discord: { name: string; send: ("alerts" | "devices" | "underused" | "watchdog")[]; level: "warning" | "critical"; stacks?: string[]; mention: boolean }[];
+  /** [watchdog], when enabled: what it looks after, and the restarts of the last 24 h. */
+  watchdog?: { stacks: string[]; action: "restart" | "reboot"; dryRun: boolean; failingForMs: number; events: WatchdogEvent[] };
   title: string;
   pollIntervalMs: number;
   /** Where chart history comes from. */
@@ -411,6 +434,58 @@ export interface DragoniteAccount {
   consecutive_disabled: number | null;
   /** The stack (Dragonite id) it belongs to, in the combined list. */
   stack?: string;
+}
+
+/**
+ * One account's row as the browser may see it: every column but the password
+ * and the refresh token, which stay here (only whether it has one).
+ */
+export interface AccountRow {
+  username: string;
+  email: string | null;
+  provider: string;
+  level: number;
+  warn: boolean;
+  warn_expiration: number | null;
+  suspended: boolean;
+  banned: boolean;
+  invalid: boolean;
+  auth_banned: number;
+  ar_ban_state: number | null;
+  ar_ban_last_checked: number | null;
+  last_selected: number | null;
+  last_released: number | null;
+  last_disabled: number | null;
+  last_banned: number | null;
+  last_suspended: number | null;
+  consecutive_disable_count: number | null;
+  has_refresh_token: boolean;
+  last_refreshed: number | null;
+  next_available_time: number | null;
+}
+
+/** What may be changed, as the edit form sends it. */
+export interface AccountChanges {
+  password?: string;
+  email?: string | null;
+  provider?: string;
+  level?: number;
+  warn?: boolean;
+  warn_expiration?: number;
+  suspended?: boolean;
+  banned?: boolean;
+  invalid?: boolean;
+  /** Only to lift it: Dragonite sets it when a login is refused. */
+  clear_auth_ban?: true;
+  /** Dragonite logs in again with the password and stores a new one. */
+  clear_refresh_token?: true;
+}
+
+/** GET /api/dragonite-accounts/one. */
+export interface AccountDetail {
+  account: AccountRow;
+  /** A worker is using it: it can be seen, not edited. */
+  inUse: boolean;
 }
 
 /** How a move of accounts to another stack went, per stack they came from. */

@@ -33,6 +33,7 @@ import type {
   AccountLevelCounts,
   DragoniteAccount,
   DragoniteDbCheck,
+  DragoniteAreas,
   DragoniteSummary,
   MapDevice,
   MapTrailPoint,
@@ -54,7 +55,7 @@ import {
   SESSION_COOKIE,
   verifySession,
 } from "./auth.ts";
-import { type AppConfig, type DragoniteConfig, loadConfig, type RotomInstanceConfig, type ZapdosConfig } from "./config.ts";
+import { type AppConfig, type DiscordConfig, type DiscordSend, type DragoniteConfig, loadConfig, type RotomInstanceConfig, type ZapdosConfig } from "./config.ts";
 import { RotomRegistry, rotomFetch } from "./rotom.ts";
 import {
   controllerSource,
@@ -128,7 +129,10 @@ import {
   spawnpointsIn,
 } from "./golbat-db.ts";
 import { closeDbPools, dbAccount, dbCheck, dbError, dbPool } from "./db.ts";
-import { moveAccountRows } from "./dragonite-db.ts";
+import { accountUpdates, moveAccountRows, readAccount, updateAccount } from "./dragonite-db.ts";
+import { DiscordNotifier, type PostedProblem, type Problem } from "./discord.ts";
+import { type WatchedDevice, Watchdog } from "./watchdog.ts";
+import { type AlertInputs, computeAlerts } from "../shared/alerts.ts";
 import { GOLBAT_INTERVALS, GOLBAT_PANELS, golbatAreas, golbatPanel, golbatSummary } from "./golbat.ts";
 import { DEVICE_METRICS, type DeviceMetric, vmControllerDemand, vmDeviceSeries, vmHistory } from "./vm.ts";
 
@@ -364,7 +368,17 @@ app.post("/api/auth/logout", (c) => {
 });
 
 // Everything else under /api needs a session.
+/**
+ * Marks a request Nacli makes to its own API (app.request), for the Discord
+ * notifier: a symbol, so no request from the network can carry it.
+ */
+const INTERNAL = Symbol("nacli-internal");
+
 app.use("/api/*", async (c, next) => {
+  if ((c.env as Record<symbol, unknown> | undefined)?.[INTERNAL] === true && c.req.method === "GET") {
+    c.set("user", "nacli");
+    return next();
+  }
   const user = verifySession(cfg, getCookie(c, SESSION_COOKIE));
   if (!user) return c.json({ error: "not authenticated" }, 401);
   // A custom header is required so a cross-site form cannot ride the cookie.
@@ -389,6 +403,10 @@ app.get("/api/app", async (c) => {
     appInfoServed = true;
   }
   return c.json<AppInfo>({
+    discord: cfg.discord.map(({ name, send, level, stacks, mention }) => ({ name, send, level, stacks, mention: !!mention })),
+    watchdog: cfg.watchdog?.enabled
+      ? { stacks: cfg.watchdog.stacks, action: cfg.watchdog.action, dryRun: cfg.watchdog.dryRun, failingForMs: cfg.watchdog.failingForMs, events: watchdog.recent() }
+      : undefined,
     title: cfg.title,
     pollIntervalMs: cfg.pollIntervalMs,
     historySource: cfg.instances.some((i) => onVm("rotom", i.zapdosInstance)) ? "zapdos" : "memory",
@@ -946,6 +964,71 @@ app.post("/api/dragonite-accounts/move", async (c) => {
         (reloads.length ? `; accounts reloaded in ${reloads.map((r) => `${r.stack}${r.error ? ` (failed: ${r.error})` : ""}`).join(", ")}` : ""),
     );
     return c.json({ results, reloads });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/**
+ * One account from its stack's database (needs [database] and the stack's
+ * `database`): every column but the password and the refresh token, and
+ * whether a worker is using it now.
+ */
+app.get("/api/dragonite-accounts/one", async (c) => {
+  const d = movable(c.req.query("stack"));
+  if (!d) return c.json({ error: "the stack needs its API and a database" }, 400);
+  const username = accountText(c.req.query("username"), 128);
+  if (!username) return c.json({ error: "which account?" }, 400);
+  try {
+    const account = await readAccount(cfg.database!, d.database, username);
+    if (!account) return c.json({ error: `${d.name} has no account ${username}` }, 404);
+    const live = (await allAccountsOf(d)).find((a) => a.username.toLowerCase() === username.toLowerCase());
+    return c.json({ account, inUse: !!live?.in_use });
+  } catch (e) {
+    return c.json({ error: dbError(e, d.database, "Dragonite") }, 502);
+  }
+});
+
+/**
+ * Edits one account in its stack's database, then Dragonite reloads its
+ * accounts. Not while a worker is using it: Dragonite keeps that account in
+ * memory and would write its own copy back when it lets it go.
+ */
+app.post("/api/dragonite-accounts/one", async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const d = movable(b.stack);
+  if (!d) return c.json({ error: "the stack needs its API and a database" }, 400);
+  const username = accountText(b.username, 128);
+  if (!username) return c.json({ error: "which account?" }, 400);
+  const changes = accountUpdates(typeof b.changes === "object" && b.changes ? (b.changes as Record<string, unknown>) : {});
+  if ("error" in changes) return c.json({ error: changes.error }, 400);
+  try {
+    forgetAccounts(d.id);
+    const live = (await allAccountsOf(d)).find((a) => a.username.toLowerCase() === username.toLowerCase());
+    if (live?.in_use) return c.json({ error: `${username} is in use: edit it once a worker lets it go` }, 409);
+    let found: boolean;
+    try {
+      found = await updateAccount(cfg.database!, d.database, username, changes.set);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      const error =
+        code === "ER_TABLEACCESS_DENIED_ERROR" || code === "ER_COLUMNACCESS_DENIED_ERROR"
+          ? `the [database] user cannot edit accounts in "${d.database}" (needs UPDATE on its account table)`
+          : dbError(e, d.database, "Dragonite");
+      return c.json({ error }, 502);
+    }
+    if (!found) return c.json({ error: `${d.name} has no account ${username}` }, 404);
+    // The password and token are never logged, only that they changed.
+    console.log(`[dragonite] ${c.get("user")} edits account ${username} in ${d.name}: ${Object.keys(changes.set).join(", ")}`);
+    let reload: string | undefined;
+    try {
+      await dragoniteControl(d, "reload-accounts", cfg.requestTimeoutMs);
+    } catch (e) {
+      reload = (e as Error).message;
+    }
+    forgetAccounts(d.id);
+    const account = await readAccount(cfg.database!, d.database, username);
+    return c.json({ account, reloadError: reload });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
@@ -2958,6 +3041,277 @@ app.all("/api/rotom/:id/*", async (c) => {
   }
 });
 
+// ---------- Discord ([[discord]]) ----------
+
+/** One notifier per webhook, by its name: each remembers what it has posted. */
+const notifiers = new Map<string, DiscordNotifier>();
+/** What was saved for each webhook, until config.toml has it again. */
+const savedPosts: Record<string, PostedProblem[]> = Array.isArray(saved.discord?.posted) ? {} : (saved.discord?.posted ?? {});
+function syncNotifiers() {
+  const names = new Set(cfg.discord.map((w) => w.name));
+  for (const name of notifiers.keys()) if (!names.has(name)) notifiers.delete(name);
+  for (const name of names) {
+    if (notifiers.has(name)) continue;
+    const n = new DiscordNotifier(
+      () => cfg.discord.find((w) => w.name === name),
+      () => cfg.title,
+      () => cfg.publicUrl,
+    );
+    n.restore(savedPosts[name]);
+    notifiers.set(name, n);
+  }
+}
+/** Since when each enabled device has been disconnected, by "instance\tdevice". */
+const devicesDown = new Map<string, number>(Object.entries(saved.discord?.devicesDown ?? {}));
+/** Since when each device has had free workers while its Dragonite was short of them. */
+const underusedSince = new Map<string, number>(Object.entries(saved.discord?.underused ?? {}));
+
+/** One of Nacli's own GET routes, as the browser would get it; undefined when it fails. */
+async function own<T>(path: string): Promise<T | undefined> {
+  const res = await app.request(path, {}, { [INTERNAL]: true });
+  return res.ok ? ((await res.json()) as T) : undefined;
+}
+
+/** The Status page's alerts, from the same routes and rules the browser uses. */
+async function alertProblems(): Promise<Problem[]> {
+  const info = await own<AppInfo>("/api/app");
+  if (!info) return [];
+  const accounts = info.dragonite.filter((d) => d.accounts).length;
+  const [demand, dragonite, golbat, rates, duplicates] = await Promise.all([
+    info.instances.length ? own<AlertInputs["demand"]>("/api/controller-demand") : undefined,
+    info.dragonite.length ? own<DragoniteSummary>("/api/dragonite/summary") : undefined,
+    info.golbat ? own<AlertInputs["golbat"]>("/api/golbat/summary") : undefined,
+    accounts ? own<AlertInputs["rates"]>("/api/dragonite-rate-limits") : undefined,
+    accounts > 1 ? own<AlertInputs["duplicates"]>("/api/dragonite-accounts/duplicates") : undefined,
+  ]);
+  return (
+    computeAlerts({ app: info, demand, dragonite, golbat, rates, duplicates })
+      // The watchdog's restarts go out as they happen, to the webhooks that send "watchdog".
+      .filter((a) => !a.key.startsWith("watchdog:"))
+      .map((a) => ({ ...a, kind: "alerts" as const }))
+  );
+}
+
+/** Keeps the first time a condition was seen, and forgets the ones gone; returns since when. */
+function track(map: Map<string, number>, key: string, on: boolean, now: number) {
+  if (!on) {
+    map.delete(key);
+    return undefined;
+  }
+  const from = map.get(key) ?? now;
+  map.set(key, from);
+  return from;
+}
+
+/**
+ * Enabled devices that are disconnected, with since when. Not those of a
+ * RotomNG that does not answer: its own alert says so.
+ */
+function deviceProblems(): Problem[] {
+  const now = Date.now();
+  const listed = new Set<string>();
+  const out: Problem[] = [];
+  for (const s of registry.all()) {
+    if (!s.status) continue;
+    for (const d of s.status.devices) {
+      const key = `${s.cfg.id}\t${d.id}`;
+      listed.add(key);
+      const since = track(devicesDown, key, d.enabled && !d.is_connected, now);
+      if (since === undefined) continue;
+      out.push({
+        key: `device:${key}`,
+        kind: "devices",
+        level: "warning",
+        subject: `Device ${d.origin || d.id}`,
+        text: `disconnected from Rotom ${s.cfg.name}${d.last_connected_at_ms ? `; last connected ${new Date(d.last_connected_at_ms).toLocaleString("en-GB")}` : ""}`,
+        to: "/devices",
+        stack: s.cfg.name,
+        since,
+      });
+    }
+  }
+  // A device Rotom no longer lists is no longer counted as down.
+  const reachable = new Set(registry.all().filter((s) => s.status).map((s) => s.cfg.id));
+  for (const k of devicesDown.keys()) if (reachable.has(k.split("\t")[0]) && !listed.has(k)) devicesDown.delete(k);
+  return out;
+}
+
+/**
+ * Devices with free workers while their stack's Dragonite is short of them
+ * (its areas and modes want more than they have): the workers are there,
+ * but no controller takes them.
+ */
+async function underusedProblems(): Promise<Problem[]> {
+  const now = Date.now();
+  const out: Problem[] = [];
+  const seen = new Set<string>();
+  for (const s of registry.all()) {
+    const d = cfg.dragonite.find((x) => x.rotom === s.cfg.id && x.api);
+    if (!s.status || !d) continue;
+    const list = await own<DragoniteAreas>(`/api/dragonite/${encodeURIComponent(d.id)}/areas`);
+    if (!list) continue;
+    const short = [
+      ...list.areas.filter((a) => a.enabled && a.live).map((a) => ({ name: a.name, ...a.live! })),
+      ...list.unbounds.map((u) => ({ name: u.name, expected: u.expected, active: u.active, workers: u.workers })),
+    ].filter((g) => g.expected > g.active);
+    const missing = short.reduce((n, g) => n + g.expected - g.active, 0);
+    const where = short
+      .slice(0, 3)
+      .map((g) => `${g.name} ${g.active}/${g.expected}`)
+      .join(", ");
+    for (const dev of s.status.devices) {
+      const key = `${s.cfg.id}\t${dev.id}`;
+      seen.add(key);
+      const free = dev.worker_count - dev.worker_in_use_count;
+      const since = track(underusedSince, key, missing > 0 && dev.enabled && dev.is_connected && dev.can_be_used && free > 0, now);
+      if (since === undefined) continue;
+      out.push({
+        key: `underused:${key}`,
+        kind: "underused",
+        level: "warning",
+        subject: `Device ${dev.origin || dev.id}`,
+        text: `has ${free} of ${dev.worker_count} workers free on Rotom ${s.cfg.name}, while Dragonite ${d.name} is ${missing} worker${missing === 1 ? "" : "s"} short (${where}${short.length > 3 ? "…" : ""})`,
+        to: "/workers",
+        stack: s.cfg.name,
+        since,
+      });
+    }
+  }
+  for (const k of underusedSince.keys()) if (!seen.has(k)) underusedSince.delete(k);
+  return out;
+}
+
+/** What this webhook posts of all the problems, each kind after its own wait. */
+function forWebhook(w: DiscordConfig, problems: Problem[]) {
+  const now = Date.now();
+  return problems.filter((p) => {
+    if (!w.send.includes(p.kind)) return false;
+    if (p.kind === "alerts" && w.level === "critical" && p.level !== "critical") return false;
+    if (w.stacks && !(p.stack && w.stacks.includes(p.stack))) return false;
+    const wait = p.kind === "devices" ? w.deviceOfflineAfterMs : p.kind === "underused" ? w.underusedAfterMs : 0;
+    return p.since === undefined || now - p.since >= wait;
+  });
+}
+
+/** Every problem some webhook wants, worked out once for all of them. */
+async function allProblems() {
+  const wants = (k: DiscordSend) => cfg.discord.some((w) => w.send.includes(k));
+  return [
+    ...(wants("alerts") ? await alertProblems() : []),
+    ...(wants("devices") ? deviceProblems() : []),
+    ...(wants("underused") ? await underusedProblems() : []),
+  ];
+}
+
+let checking = false;
+async function checkDiscord() {
+  syncNotifiers();
+  if (!cfg.discord.length || checking) return;
+  checking = true;
+  try {
+    const problems = await allProblems();
+    for (const w of cfg.discord) await notifiers.get(w.name)!.check(forWebhook(w, problems));
+  } catch (e) {
+    console.error(`[discord] check failed: ${(e as Error).message}`);
+  } finally {
+    checking = false;
+  }
+}
+syncNotifiers();
+// The first check once the Rotoms have been polled; then every minute.
+setTimeout(() => void checkDiscord(), 45_000).unref();
+setInterval(() => void checkDiscord(), 60_000).unref();
+
+/** Sends a test message to one webhook (by name) or to all, each with the problems open for it. */
+app.post("/api/discord/test", async (c) => {
+  if (!cfg.discord.length) return c.json({ error: "no [[discord]] in config.toml" }, 404);
+  const b = (await c.req.json().catch(() => ({}))) as { name?: unknown };
+  const list = typeof b.name === "string" ? cfg.discord.filter((w) => w.name === b.name) : cfg.discord;
+  if (!list.length) return c.json({ error: "no webhook with that name" }, 404);
+  syncNotifiers();
+  const problems = await allProblems();
+  const results: { name: string; error?: string }[] = [];
+  for (const w of list) {
+    try {
+      await notifiers.get(w.name)!.test(forWebhook(w, problems));
+      results.push({ name: w.name });
+    } catch (e) {
+      results.push({ name: w.name, error: (e as Error).message });
+    }
+  }
+  console.log(`[discord] ${c.get("user")} sends a test message to ${list.map((w) => w.name).join(", ")}`);
+  return c.json({ results });
+});
+
+// ---------- Watchdog ([watchdog]) ----------
+
+/**
+ * The devices of the watched stacks as the watchdog needs them: connected or
+ * not, their workers on Rotom, and the newest data their Dragonite workers sent.
+ */
+async function watchedDevices(stacks: string[]): Promise<WatchedDevice[]> {
+  const out: WatchedDevice[] = [];
+  for (const s of registry.all()) {
+    if (!s.status || !stacks.includes(s.cfg.name)) continue;
+    // Dragonite names the Rotom device each worker runs on (rotomDeviceTagger).
+    const d = cfg.dragonite.find((x) => x.rotom === s.cfg.id && x.api);
+    const list = d ? await own<DragoniteAreas>(`/api/dragonite/${encodeURIComponent(d.id)}/areas`) : undefined;
+    const lastData = new Map<string, number>();
+    for (const w of [...(list?.areas ?? []).flatMap((a) => a.live?.workers ?? []), ...(list?.unbounds ?? []).flatMap((u) => u.workers)]) {
+      const dev = w.rotom?.deviceId;
+      if (!dev) continue;
+      // Never sent anything: Dragonite says year 1; count it as long ago, not as now.
+      const t = w.lastData > 0 ? w.lastData * 1000 : 0;
+      lastData.set(dev, Math.max(lastData.get(dev) ?? 0, t));
+    }
+    for (const dev of s.status.devices) {
+      out.push({
+        stack: s.cfg.name,
+        instanceId: s.cfg.id,
+        deviceId: dev.id,
+        name: dev.origin || dev.id,
+        // A disconnected device cannot be told to restart: Rotom reaches it through its connection.
+        watched: dev.enabled && dev.is_connected,
+        workersConnected: (dev.workers ?? []).filter((w) => w.is_connected).length,
+        lastData: list ? lastData.get(dev.id) : undefined,
+      });
+    }
+  }
+  return out;
+}
+
+const watchdog = new Watchdog();
+watchdog.restore(saved.watchdog);
+let watching = false;
+async function checkWatchdog() {
+  const w = cfg.watchdog;
+  if (!w?.enabled || watching) return;
+  watching = true;
+  try {
+    const events = await watchdog.check(w, await watchedDevices(w.stacks), async (d, action) => {
+      const s = registry.get(d.instanceId);
+      if (!s) throw new Error("its RotomNG is no longer in config.toml");
+      const res = await rotomFetch(s.cfg, `/device/${encodeURIComponent(d.deviceId)}/action/${action}`, 60_000, { method: "PUT" });
+      s.stale();
+      if (!res.ok) throw new Error(`Rotom answered HTTP ${res.status}`);
+    });
+    if (!events.length) return;
+    syncNotifiers();
+    for (const hook of cfg.discord) {
+      if (!hook.send.includes("watchdog")) continue;
+      const mine = events.filter((e) => !hook.stacks || hook.stacks.includes(e.stack));
+      await notifiers.get(hook.name)!.restarts(mine);
+    }
+  } catch (e) {
+    console.error(`[watchdog] check failed: ${(e as Error).message}`);
+  } finally {
+    watching = false;
+  }
+}
+// The first check once the Rotoms have been polled; then every minute.
+setTimeout(() => void checkWatchdog(), 50_000).unref();
+setInterval(() => void checkWatchdog(), 60_000).unref();
+
 // ---------- Static frontend ----------
 
 if (existsSync(STATIC_DIR)) {
@@ -2970,7 +3324,18 @@ const server = serve({ fetch: app.fetch, hostname: cfg.host, port: cfg.port }, (
   for (const i of cfg.instances) console.log(`  · ${i.name} → ${i.url}`);
 });
 
-const state = (): SavedState => ({ savedAt: Date.now(), metrics: localMetrics.dump(), stats: statsHistory, encounters: encounterHistory });
+const state = (): SavedState => ({
+  savedAt: Date.now(),
+  metrics: localMetrics.dump(),
+  stats: statsHistory,
+  encounters: encounterHistory,
+  discord: {
+    posted: { ...savedPosts, ...Object.fromEntries([...notifiers].map(([name, n]) => [name, n.dump()])) },
+    devicesDown: Object.fromEntries(devicesDown),
+    underused: Object.fromEntries(underusedSince),
+  },
+  watchdog: watchdog.dump(),
+});
 setInterval(() => void saveState(cfg.stateFile, state()), 5 * 60_000).unref();
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {

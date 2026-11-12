@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowRightLeft, ArrowUp, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, KeyRound, LogIn, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type AccountCounts, type AccountLevelCounts, type AccountState, type AccountToken, accountState, type DragoniteAccount, type DragoniteInfo } from "@shared/types";
+import { AccountModal } from "@/components/account-edit";
 import { AddAccountsModal } from "@/components/account-forms";
 import { MoveBar, MoveCountModal, movableStacks, type PickedAccount } from "@/components/account-move";
 import { FilterMenu } from "@/components/filter-menu";
@@ -348,6 +349,9 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
   const movable = movableStacks(stacks);
   const canMove = !inUse && movable.length > 1;
   const [picked, setPicked] = useState<Map<string, PickedAccount>>(() => new Map());
+  // An account opens in its modal only where Nacli can read its stack's database.
+  const [open, setOpen] = useState<PickedAccount>();
+  const readable = (a: DragoniteAccount) => movable.some((d) => d.id === a.stack);
   const keyOf = (a: { stack?: string; username: string }) => `${a.stack}\t${a.username}`;
   const pickable = (a: DragoniteAccount) => canMove && !a.in_use && movable.some((d) => d.id === a.stack);
   const togglePick = (list: DragoniteAccount[], on: boolean) =>
@@ -450,6 +454,7 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
           onClear={() => setPicked(new Map())}
         />
       ) : null}
+      {open ? <AccountModal stack={open.stack} username={open.username} onClose={() => setOpen(undefined)} /> : null}
       {list.error ? (
         <p className="text-sm text-red-300">{(list.error as Error).message}</p>
       ) : !data ? (
@@ -522,7 +527,20 @@ function AccountsTable({ inUse, title }: { inUse: boolean; title: string }) {
                         </HoverCard>
                       </td>
                     ) : null}
-                    <td className="font-mono text-xs">{a.username}</td>
+                    <td className="font-mono text-xs">
+                      {readable(a) ? (
+                        <button
+                          type="button"
+                          onClick={() => setOpen({ stack: a.stack ?? "", username: a.username })}
+                          className="text-left underline-offset-2 hover:text-primary hover:underline"
+                          title="View and edit"
+                        >
+                          {a.username}
+                        </button>
+                      ) : (
+                        a.username
+                      )}
+                    </td>
                     <td className="tabular-nums">{a.level}</td>
                     <td className="uppercase">{a.provider}</td>
                     <td>

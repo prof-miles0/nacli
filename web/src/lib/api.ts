@@ -7,7 +7,10 @@ import type {
   SpawnpointMap,
   SpawnpointOverview,
   AccountImportResult,
+  AccountChanges,
+  AccountDetail,
   AccountMoveResult,
+  AccountRow,
   AccountOwner,
   AccountCounts,
   AccountLevelCounts,
@@ -251,6 +254,12 @@ export const endpoints = {
   moveAccounts: (body: { to: string } & ({ accounts: { stack: string; username: string }[] } | { from: string; count: number })) =>
     api<AccountMoveResult>("/dragonite-accounts/move", { method: "POST", body: JSON.stringify(body) }),
   accountDuplicates: () => api<AccountOwner[]>("/dragonite-accounts/duplicates"),
+  discordTest: (name?: string) =>
+    api<{ results: { name: string; error?: string }[] }>("/discord/test", { method: "POST", body: JSON.stringify({ name }) }),
+  account: (stack: string, username: string) =>
+    api<AccountDetail>(`/dragonite-accounts/one?${new URLSearchParams({ stack, username })}`),
+  editAccount: (stack: string, username: string, changes: AccountChanges) =>
+    api<{ account: AccountRow; reloadError?: string }>("/dragonite-accounts/one", { method: "POST", body: JSON.stringify({ stack, username, changes }) }),
   allAccounts: (p: {
     page: number;
     perPage: number;

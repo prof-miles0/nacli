@@ -25,7 +25,7 @@ import { endpoints } from "@/lib/api";
 import { isUp, linkState } from "@/lib/dragonite";
 import { useAppInfo } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
-import { AlertsBar } from "./alerts";
+import { AlertCount } from "./alerts";
 import { useAuth } from "./auth";
 import { Toaster } from "./toaster";
 import { UserMenu } from "./user-menu";
@@ -361,6 +361,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               >
                 <item.icon />
                 {item.label}
+                {item.to === "/status" ? <AlertCount /> : null}
               </NavLink>
             ))}
           </div>
@@ -444,7 +445,6 @@ export function Layout({ children }: { children: ReactNode }) {
             would bring the tabs back into view and hide it again). */}
         <div id="tabs-bar" className="sticky top-16 z-30 h-0" />
         <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 pt-4 pb-16 md:px-6">
-          <AlertsBar />
           {children}
         </main>
         <Toaster />

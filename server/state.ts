@@ -7,7 +7,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, gzip, gzipSync } from "node:zlib";
-import type { AreaStatsCounts } from "../shared/types.ts";
+import type { AreaStatsCounts, WatchdogEvent } from "../shared/types.ts";
+import type { PostedProblem } from "./discord.ts";
 import type { SavedInstance } from "./local-metrics.ts";
 
 export interface SavedState {
@@ -22,6 +23,14 @@ export interface SavedState {
    * 12 buckets of minutes left until despawn.
    */
   encounters?: { t: number; areas: Record<string, number[]> }[];
+  /**
+   * [[discord]]: the problems already posted, by webhook name; since when each
+   * device has been disconnected, and has had free workers while its Dragonite
+   * was short of them (by "instance\tdevice").
+   */
+  discord?: { posted: Record<string, PostedProblem[]>; devicesDown: Record<string, number>; underused?: Record<string, number> };
+  /** [watchdog]: the restarts of the last 24 h, for the cooldown, max_per_day and the alerts. */
+  watchdog?: WatchdogEvent[];
 }
 
 /** What was saved, or nothing when there is no file (or it cannot be read). */

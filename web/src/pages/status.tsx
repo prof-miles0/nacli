@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpCircle, CheckCircle2, CircleAlert, CirclePause, CircleX, Gauge, Group, type LucideIcon, MemoryStick, RefreshCw, Router, TrafficCone, TriangleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { DragoniteStatus, InstanceInfo, SystemStatus } from "@shared/types";
+import { AlertsBar } from "@/components/alerts";
 import { OneLine } from "@/components/one-line";
 import { toast } from "@/components/toaster";
 import { Button, Card, HoverCard, Input, Label, Modal, Spinner } from "@/components/ui";
@@ -53,7 +54,7 @@ function Banners({ data }: { data: SystemStatus }) {
       items.push({ key: `down:${d.id}`, level: "error", text: <><b>Dragonite {d.name}</b> isn't answering{d.error ? `: ${d.error}` : ""}</> });
       continue;
     }
-    // A degraded rate limit is in the alert box on every page (and in its card below).
+    // A degraded rate limit is in the alert box at the top of this page (and in its card below).
     if (d.hasKoji === false) items.push({ key: `koji:${d.id}`, level: "warn", text: <><b>{d.name}</b>: Kōji is not configured — routes and geofences may be stale.</> });
     const lost = Object.entries(d.golbat?.discarded ?? {}).filter(([, n]) => n > 0);
     if (lost.length) {
@@ -547,6 +548,7 @@ export function StatusPage() {
   const stackColor = (rotom?: string) => (rotom ? color(rotom) : "var(--muted-foreground)");
   return (
     <div className="animate-in flex flex-col gap-4">
+      <AlertsBar />
       <VersionsSummary data={data} instances={app.instances} />
       <Banners data={data} />
       {data.dragonite.length ? (

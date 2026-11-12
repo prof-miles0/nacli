@@ -391,6 +391,21 @@ export function DeviceMap({
   const q = useQuery({ queryKey: ["golbat-devices"], queryFn: endpoints.golbatDevices, refetchInterval: 15_000, enabled: withDevices });
   const fences = useQuery({ queryKey: ["dragonite-geofences"], queryFn: endpoints.geofences, refetchInterval: 60_000, enabled: withAreas });
   const areaCount = (fences.data ?? []).reduce((n, s) => n + s.areas.length, 0);
+  // Each stack's areas with their workers, as the Areas page reads them (shared
+  // queries): the first view frames the ones scanning now.
+  const stackAreaLists = useQueries({
+    queries: (fences.data ?? []).map((s) => ({
+      queryKey: ["dragonite-areas", s.id],
+      queryFn: () => endpoints.dragoniteAreas(s.id),
+      refetchInterval: 15_000,
+    })),
+  });
+  const scanning = new Set(
+    (fences.data ?? []).flatMap((s, i) =>
+      (stackAreaLists[i]?.data?.areas ?? []).filter((a) => a.enabled && (a.live?.active ?? 0) > 0).map((a) => `${s.id}:${a.id}`),
+    ),
+  );
+  const workersKnown = stackAreaLists.every((x) => !x.isLoading);
   // Zoomed out with areas to show, the devices wait for a closer zoom.
   const gated = withDevices && areaCount > 0;
   const [zoom, setZoom] = useState(4.5);
@@ -398,6 +413,8 @@ export function DeviceMap({
   const map = useRef<maplibregl.Map | undefined>(undefined);
   const [ready, setReady] = useState(false);
   const fitted = useRef(false);
+  /** The floating summary at the top left: a fit keeps every area below it. */
+  const summaryRef = useRef<HTMLDivElement>(null);
   const devicesRef = useRef<MapDevice[]>([]);
   // Where the user left the map, kept when the basemap is swapped for the theme.
   const view = useRef<{ center: maplibregl.LngLat; zoom: number } | undefined>(undefined);
@@ -887,17 +904,21 @@ export function DeviceMap({
     }),
   );
   ringsRef.current = new Map(areaShapes.map((a) => [a.key, a.rings]));
-  // The areas when there are any (the map's first view), else the devices.
+  // Every area scanning now, however far apart (another country included);
+  // with none scanning, every enabled area; with no areas, the devices.
   const fit = () => {
     if (!map.current) return;
     const b = new maplibregl.LngLatBounds();
-    if (areaShapes.length) for (const a of mainGroup(areaShapes)) for (const ring of a.rings) for (const [lon, lat] of ring) b.extend([lon, lat]);
+    const busy = areaShapes.filter((a) => scanning.has(a.key));
+    if (areaShapes.length) for (const a of busy.length ? busy : areaShapes) for (const ring of a.rings) for (const [lon, lat] of ring) b.extend([lon, lat]);
     else for (const d of mainGroup(live.length ? live : devices)) b.extend([d.lon, d.lat]);
     if (b.isEmpty()) return;
     map.current.resize();
-    // Extra room at the top for the floating summary, so it covers no device.
+    // Room at the top for the floating summary (its own height, which grows with
+    // the stacks it lists), so it covers no area or device.
+    const below = (summaryRef.current?.offsetHeight ?? 0) + 24;
     map.current.fitBounds(b, {
-      padding: window.innerWidth < 640 ? { top: 70, bottom: 30, left: 30, right: 30 } : { top: 120, bottom: 50, left: 50, right: 50 },
+      padding: window.innerWidth < 640 ? { top: Math.max(70, below), bottom: 30, left: 30, right: 30 } : { top: Math.max(120, below), bottom: 50, left: 50, right: 50 },
       maxZoom: 13,
       duration: fitted.current ? 600 : 0,
     });
@@ -939,11 +960,13 @@ export function DeviceMap({
   useEffect(() => {
     if (!ready || fitted.current) return;
     if (withAreas && !fences.data && !fences.error) return;
+    // Which areas are scanning decides what is framed: wait for it.
+    if (areaShapes.length && !workersKnown) return;
     if (!areaShapes.length && withDevices && !devices.length) return;
     fit();
     fitted.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, fences.data, fences.error, q.data]);
+  }, [ready, fences.data, fences.error, q.data, workersKnown]);
 
   // The devices only from DEVICES_MIN_ZOOM on while there are areas to show.
   useEffect(() => {
@@ -1142,7 +1165,7 @@ export function DeviceMap({
 
         {/* Floating column, top left: the summary and, on wide screens, the
             selected controller below it (on a phone that card goes under the map). */}
-        <div className="absolute top-3 left-3 flex max-w-[calc(100%-4.5rem)] flex-col gap-2 sm:w-64 sm:max-w-[calc(100%-7rem)]">
+        <div ref={summaryRef} className="absolute top-3 left-3 flex max-w-[calc(100%-4.5rem)] flex-col gap-2 sm:w-64 sm:max-w-[calc(100%-7rem)]">
           {/* Zoomed out (or without Golbat) the map is about the areas, so is the summary. */}
           {!withDevices || (gated && zoom < DEVICES_MIN_ZOOM) ? (
             <div className="map-glass pointer-events-none flex flex-col gap-2 rounded-lg px-3 py-2 sm:px-3.5 sm:py-2.5">

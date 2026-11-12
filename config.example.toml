@@ -23,6 +23,8 @@ session_ttl = "24h"
 secure_cookies = false
 # Longest wait for any instance.
 request_timeout = "8s"
+# Nacli's address as people open it, for the buttons of the Discord messages.
+# public_url = "https://nacli.example.com"
 
 # For the instances Zapdos does not cover, Nacli reads their metrics itself
 # and keeps the charts in memory:
@@ -126,6 +128,7 @@ zapdos_instance = "rotom-beta"
 #   GRANT DELETE ON golbat.spawnpoint TO 'nacli'@'%';             -- deleting spawnpoints
 #   GRANT SELECT ON dragonite_alpha.account TO 'nacli'@'%';       -- each Dragonite: DB pill, moving
 #   GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';  -- moving accounts
+#   GRANT UPDATE ON dragonite_alpha.account TO 'nacli'@'%';       -- editing accounts
 # The Help page (user menu, top right) walks through every step.
 # [database]
 # host = "10.0.0.40"
@@ -145,6 +148,50 @@ zapdos_instance = "rotom-beta"
 # bearer_token = "..."           # instead of username/password
 # instance_label = "instance"    # the label that tells instances apart
 # selector = 'job="unown"'       # extra filter added to every query
+
+# ─── Discord (optional) ──────────────────────────────────────────────────────
+
+# Posts problems to Discord channels, one [[discord]] per webhook (channel
+# settings › Integrations › Webhooks), when they start and when they end. The
+# webhook's URL is a secret and never leaves the server.
+#   send                  some of "alerts" (the Status page's), "devices"
+#                         (disconnected), "underused" (free workers while
+#                         their Dragonite is short of them) and "watchdog"
+#                         (the devices it restarts); default: all
+#   level                 "critical": only the critical alerts
+#   stacks                only these [[stack]] names (problems of no stack,
+#                         like Golbat's, go to webhooks without it)
+#   mention               "@here" or "<@&role id>": a ping on each new problem
+#   device_offline_after  how long a device must stay disconnected ("5m")
+#   underused_after       how long a device must stay underused ("10m")
+#   remind_every          post open problems again, e.g. "6h" (default: never)
+# [[discord]]
+# name = "Admins"
+# webhook_url = "https://discord.com/api/webhooks/…"
+#
+# [[discord]]
+# name = "Alpha"
+# webhook_url = "https://discord.com/api/webhooks/…"
+# send = ["alerts", "devices"]
+# level = "critical"
+# stacks = ["Alpha"]
+# mention = "@here"
+
+# ─── Watchdog (optional, off by default) ─────────────────────────────────────
+
+# Restarts the devices of these stacks when they keep failing while connected
+# to Rotom: no worker connected (no_workers), or Dragonite workers on them that
+# send no data (no_data). It holds back when most of a stack fails at once.
+# Each restart shows on Status and goes to the webhooks that send "watchdog".
+# [watchdog]
+# enabled = true                   # nothing happens until true
+# stacks = ["Alpha"]
+# checks = ["no_workers", "no_data"]
+# failing_for = "10m"              # at least "3m"
+# action = "restart"               # or "reboot": the whole device
+# cooldown = "30m"                 # between two restarts of one device
+# max_per_day = 6                  # restarts of one device in 24 h
+# dry_run = true                   # only say what it would do
 
 # ─── Map ─────────────────────────────────────────────────────────────────────
 

@@ -1,15 +1,54 @@
 // Help: how to connect each part of the stack in config.toml, what is
 // connected here now, and what the database account needs.
 
-import { Check, Copy, Minus } from "lucide-react";
+import { Check, Copy, Minus, Send } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router";
 import type { AppInfo } from "@shared/types";
-import { Card } from "@/components/ui";
+import { Button, Card, Spinner } from "@/components/ui";
 import { endpoints } from "@/lib/api";
 import { useAppInfo } from "@/lib/state";
 import { cn } from "@/lib/utils";
+
+/** The [[discord]] webhooks, what each posts, and a button that sends each a test message. */
+function DiscordWebhooks({ list }: { list: AppInfo["discord"] }) {
+  const [state, setState] = useState<Record<string, { busy?: boolean; ok?: boolean; error?: string }>>({});
+  const send = async (name: string) => {
+    setState((s) => ({ ...s, [name]: { busy: true } }));
+    try {
+      const r = (await endpoints.discordTest(name)).results[0];
+      setState((s) => ({ ...s, [name]: r?.error ? { error: r.error } : { ok: true } }));
+    } catch (e) {
+      setState((s) => ({ ...s, [name]: { error: (e as Error).message } }));
+    }
+  };
+  return (
+    <div className="flex flex-col divide-y rounded-lg border">
+      {list.map((w) => {
+        const st = state[w.name] ?? {};
+        return (
+          <div key={w.name} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="font-medium">{w.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {w.send.map((k) => (k === "alerts" && w.level === "critical" ? "critical alerts" : k)).join(", ")}
+                {w.stacks ? ` · ${w.stacks.join(", ")}` : " · every stack"}
+                {w.mention ? " · with a mention" : ""}
+              </span>
+              {st.ok ? <span className="text-xs text-green-400">Sent: look in the channel.</span> : null}
+              {st.error ? <span className="text-xs text-red-300">{st.error}</span> : null}
+            </div>
+            <Button size="sm" variant="outline" disabled={st.busy} onClick={() => send(w.name)}>
+              {st.busy ? <Spinner className="size-4" /> : <Send />}
+              Test
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /** A config or SQL snippet, with a button that copies it. */
 function Code({ children }: { children: string }) {
@@ -71,6 +110,16 @@ function Connected({ app }: { app: AppInfo }) {
       detail: withDb.length ? withDb.map((d) => d.name).join(", ") : "no database in [stack.dragonite]",
     },
     { label: "Map", on: !!app.map, detail: app.map ? "basemap set" : "no [map]: plain background" },
+    {
+      label: "Discord",
+      on: app.discord.length > 0,
+      detail: app.discord.length ? `${app.discord.length} webhook${app.discord.length === 1 ? "" : "s"}: ${app.discord.map((w) => w.name).join(", ")}` : "no [[discord]]",
+    },
+    {
+      label: "Watchdog",
+      on: !!app.watchdog,
+      detail: app.watchdog ? `${app.watchdog.dryRun ? "dry run, " : ""}${app.watchdog.stacks.join(", ")}` : "off",
+    },
   ];
   return (
     <Card className="p-4 sm:p-5">
@@ -98,6 +147,8 @@ const STEPS = [
   { id: "database", title: "The database" },
   { id: "permissions", title: "Database permissions" },
   { id: "map", title: "The map" },
+  { id: "discord", title: "Discord" },
+  { id: "watchdog", title: "Watchdog" },
   { id: "check", title: "Check it works" },
 ];
 
@@ -145,6 +196,7 @@ GRANT DELETE ON ${golbat}.spawnpoint TO ${to};            -- optional: deleting 
 -- Each Dragonite with a database in config.toml
 ${per((db) => `GRANT SELECT ON ${db}.account TO ${to};`)}
 ${per((db) => `GRANT INSERT, DELETE ON ${db}.account TO ${to};`, "optional: moving accounts")}
+${per((db) => `GRANT UPDATE ON ${db}.account TO ${to};`, "optional: editing accounts")}
 
 -- What it has now
 SHOW GRANTS FOR ${to};`,
@@ -360,7 +412,7 @@ password = "..."`}</Code>
                 <td>
                   <C>SELECT</C>
                 </td>
-                <td>DB pill, moving accounts</td>
+                <td>DB pill, moving accounts, viewing one</td>
                 <td className="text-muted-foreground">The pill turns orange</td>
               </tr>
               <tr>
@@ -373,6 +425,17 @@ password = "..."`}</Code>
                 </td>
                 <td>Moving accounts between stacks (Accounts › Move)</td>
                 <td className="text-muted-foreground">Moving refuses, nothing changes</td>
+              </tr>
+              <tr>
+                <td>Each Dragonite</td>
+                <td>
+                  <C>account</C>
+                </td>
+                <td>
+                  <C>UPDATE</C>
+                </td>
+                <td>Editing an account (click its username in Accounts)</td>
+                <td className="text-muted-foreground">Saving refuses, nothing changes</td>
               </tr>
             </tbody>
           </table>
@@ -417,7 +480,62 @@ style_url_dark = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.js
 tiles_attribution = "&copy; OpenStreetMap &copy; CARTO"`}</Code>
       </Step>
 
-      <Step n={8} id="check" title="Check it works">
+      <Step n={8} id="discord" title="Discord">
+        <p>
+          Posts problems to Discord channels, one <C>[[discord]]</C> per webhook (channel settings › Integrations › Webhooks; its URL stays on
+          the server). Each webhook picks what it gets with <C>send</C>: the Status page's <b>alerts</b>, <b>devices</b> that stay disconnected,
+          <b>underused</b> devices, with free workers while their stack's Dragonite is short of them, and the devices the <b>watchdog</b> restarts. <C>level = "critical"</C> leaves out
+          the warnings, and <C>stacks</C> keeps only those stacks' problems (the ones of no stack, like Golbat's, go to webhooks without it).
+        </p>
+        <p>
+          A problem is posted when it starts (seen in two checks a minute apart, so a blip says nothing) and again when it ends. With{" "}
+          <C>public_url</C> in <C>[server]</C>, each message has buttons to its page in Nacli.
+        </p>
+        <Code>{`[server]
+public_url = "https://nacli.example.com"
+
+[[discord]]                          # everything, for the admins
+name = "Admins"
+webhook_url = "https://discord.com/api/webhooks/…"
+# send = ["alerts", "devices", "underused", "watchdog"]   # the default
+# remind_every = "6h"                # post open problems again
+
+[[discord]]                          # one stack's critical alerts and devices
+name = "Alpha"
+webhook_url = "https://discord.com/api/webhooks/…"
+send = ["alerts", "devices"]
+level = "critical"                   # alerts: critical only
+stacks = ["Alpha"]                   # [[stack]] names
+mention = "@here"                    # or "<@&role id>": a ping on each new problem
+# device_offline_after = "5m"        # how long a device must stay disconnected
+# underused_after = "10m"            # how long a device must stay underused`}</Code>
+        {app?.discord.length ? <DiscordWebhooks list={app.discord} /> : null}
+      </Step>
+
+      <Step n={9} id="watchdog" title="Watchdog">
+        <p>
+          Restarts the devices of the stacks you choose when they keep failing: connected to Rotom but with <b>no worker connected</b>{" "}
+          (<C>no_workers</C>), or with workers in Dragonite that have <b>sent no data</b> (<C>no_data</C>), for <C>failing_for</C>. It is off
+          until <C>enabled = true</C>. Rotom reaches a device through its connection, so a disconnected one cannot be restarted: Discord's{" "}
+          <C>devices</C> reports those.
+        </p>
+        <p>
+          It holds back when most of a stack's devices fail at once (that is its Dragonite or the network, not the devices), waits{" "}
+          <C>cooldown</C> between two restarts of the same device, and stops at <C>max_per_day</C>. Each restart shows on Status for an hour
+          and goes to the webhooks that send <C>watchdog</C>. Start with <C>dry_run = true</C> to see what it would do.
+        </p>
+        <Code>{`[watchdog]
+enabled = true                       # off by default
+stacks = ["Alpha"]                   # the [[stack]] names it looks after
+# checks = ["no_workers", "no_data"] # the default
+# failing_for = "10m"                # how long a device must keep failing (at least "3m")
+# action = "restart"                 # restart the app; "reboot": the whole device
+# cooldown = "30m"                   # between two restarts of one device (at least "10m")
+# max_per_day = 6                    # restarts of one device in 24 h
+# dry_run = true                     # only say what it would do`}</Code>
+      </Step>
+
+      <Step n={10} id="check" title="Check it works">
         <ul className="list-disc space-y-1 pl-5">
           <li>
             <b>Sidebar pills</b>: next to Rotom, Dragonite and Golbat, green when they answer. The <b>DB</b> pills (Dragonite and Golbat) turn red

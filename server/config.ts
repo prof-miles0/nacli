@@ -61,9 +61,63 @@ export interface DatabaseConfig {
   password: string;
 }
 
+/**
+ * What a webhook posts: the Status page's alerts, disconnected devices,
+ * devices with free workers while their Dragonite is short of them, and the
+ * devices the watchdog restarts.
+ */
+export const DISCORD_SENDS = ["alerts", "devices", "underused", "watchdog"] as const;
+export type DiscordSend = (typeof DISCORD_SENDS)[number];
+
+/** One [[discord]] webhook: a Discord channel and what is posted to it. */
+export interface DiscordConfig {
+  /** For logs, Help and the state file; "webhook 1"… when unset. */
+  name: string;
+  /** The channel's webhook (channel settings › Integrations › Webhooks): a secret, never sent to the browser. */
+  webhookUrl: string;
+  send: DiscordSend[];
+  /** Alerts only: "warning" posts them all, "critical" only the critical ones. */
+  level: "warning" | "critical";
+  /** Only problems of these stacks (by [[stack]] name); unset: every problem, those of no stack (Golbat…) included. */
+  stacks?: string[];
+  /** Put before each new problem, e.g. "@here" or "<@&role id>" (unset: no ping). */
+  mention?: string;
+  /** How long a device must stay disconnected before it is posted. */
+  deviceOfflineAfterMs: number;
+  /** How long a device must have free workers while its Dragonite is short of them. */
+  underusedAfterMs: number;
+  /** Post the open problems again this often (0: once only). */
+  remindEveryMs: number;
+}
+
+/** What makes the watchdog count a device as failing. */
+export const WATCHDOG_CHECKS = ["no_workers", "no_data"] as const;
+export type WatchdogCheck = (typeof WATCHDOG_CHECKS)[number];
+
+/** [watchdog]: restarts the devices of some stacks that keep failing. Off unless `enabled = true`. */
+export interface WatchdogConfig {
+  enabled: boolean;
+  /** The [[stack]] names it looks after (their RotomNG's devices). */
+  stacks: string[];
+  /** no_workers: connected but no worker connected; no_data: its Dragonite workers send nothing. */
+  checks: WatchdogCheck[];
+  /** How long a device must keep failing before it is restarted. */
+  failingForMs: number;
+  /** "restart" restarts the app, "reboot" the whole device (Rotom's device actions). */
+  action: "restart" | "reboot";
+  /** Least time between two restarts of the same device. */
+  cooldownMs: number;
+  /** Most restarts of one device in 24 h. */
+  maxPerDay: number;
+  /** Only say what it would do: alerts and messages, no restart. */
+  dryRun: boolean;
+}
+
 export interface AppConfig {
   path: string;
   title: string;
+  /** [server] public_url: Nacli's address as people open it, for links in messages (unset: no links). */
+  publicUrl?: string;
   host: string;
   port: number;
   sessionSecret: string;
@@ -92,6 +146,10 @@ export interface AppConfig {
     /** Its database's name on the [database] server (unset: no database pages). */
     database?: string;
   };
+  /** [watchdog] (unset: off). */
+  watchdog?: WatchdogConfig;
+  /** [[discord]]: the webhooks problems are posted to (none: nowhere). */
+  discord: DiscordConfig[];
   /** The MariaDB server of the stack ([database]); each part names its own database on it. */
   database?: DatabaseConfig;
   /** Basemap for the Dashboard map ([map]); sent to the browser, which draws it. */
@@ -216,6 +274,7 @@ export function loadConfig(path: string): AppConfig {
   return {
     path: abs,
     title: str(server.title, "Nacli"),
+    publicUrl: parsePublicUrl(server.public_url),
     host,
     port,
     sessionSecret: str(server.session_secret) || fallbackSecret,
@@ -228,6 +287,8 @@ export function loadConfig(path: string): AppConfig {
     zapdos: vm,
     golbat: raw.golbat ? parseGolbat(raw.golbat as Table, vm, !!raw.database) : undefined,
     database: raw.database ? parseDatabase(raw.database as Table) : undefined,
+    discord: parseDiscord(raw.discord, stacks.map((st) => st.name)),
+    watchdog: raw.watchdog ? parseWatchdog(raw.watchdog as Table, stacks.filter((st) => st.rotom).map((st) => st.name)) : undefined,
     map: raw.map ? parseMap(raw.map as Table) : undefined,
     dragonite: parseDragonite(stacks, instances, !!raw.database),
     users,
@@ -294,6 +355,75 @@ function atLeast(key: string, ms: number, min: number, label: string) {
   if (ms >= min) return ms;
   console.warn(`[config] ${key} is below the minimum, using ${label}`);
   return min;
+}
+
+function parsePublicUrl(v: unknown) {
+  const url = str(v).trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\/\S+$/.test(url)) throw new Error("[server] public_url must start with http:// or https://");
+  return url || undefined;
+}
+
+/** [[discord]] (or a single [discord]): each webhook and what it posts. */
+function parseDiscord(raw: unknown, stackNames: string[]): DiscordConfig[] {
+  const list = (Array.isArray(raw) ? raw : raw ? [raw] : []) as Table[];
+  const names = new Set<string>();
+  return list.map((d, i) => {
+    const name = str(d.name).trim() || `webhook ${i + 1}`;
+    const where = `[[discord]] "${name}"`;
+    if (names.has(name)) throw new Error(`${where}: another webhook has the same name`);
+    names.add(name);
+    const webhookUrl = str(d.webhook_url).trim();
+    // Discord's own address (or a proxy's): never plain http, the URL is the secret.
+    if (!/^https:\/\/\S+$/.test(webhookUrl)) throw new Error(`${where}: webhook_url must be the https:// address of a Discord webhook`);
+    const send = d.send === undefined ? [...DISCORD_SENDS] : Array.isArray(d.send) ? d.send.map((x) => str(x).trim()) : [];
+    const bad = send.filter((x) => !(DISCORD_SENDS as readonly string[]).includes(x));
+    if (!send.length || bad.length) throw new Error(`${where}: send must list some of ${DISCORD_SENDS.map((x) => `"${x}"`).join(", ")}`);
+    const level = d.level === undefined ? "warning" : str(d.level).trim();
+    if (level !== "warning" && level !== "critical") throw new Error(`${where}: level must be "warning" or "critical"`);
+    let stacks: string[] | undefined;
+    if (d.stacks !== undefined) {
+      stacks = Array.isArray(d.stacks) ? d.stacks.map((x) => str(x).trim()).filter(Boolean) : [];
+      const unknown = stacks.filter((x) => !stackNames.includes(x));
+      if (!stacks.length || unknown.length) throw new Error(`${where}: stacks must list [[stack]] names${unknown.length ? ` (no stack "${unknown[0]}")` : ""}`);
+    }
+    return {
+      name,
+      webhookUrl,
+      send: send as DiscordSend[],
+      level,
+      stacks,
+      mention: str(d.mention).trim() || undefined,
+      deviceOfflineAfterMs: atLeast(`${where} device_offline_after`, parseDuration(d.device_offline_after, 5 * 60_000), 60_000, "1m"),
+      underusedAfterMs: atLeast(`${where} underused_after`, parseDuration(d.underused_after, 10 * 60_000), 60_000, "1m"),
+      remindEveryMs: parseDuration(d.remind_every, 0),
+    };
+  });
+}
+
+function parseWatchdog(w: Table, rotomStacks: string[]): WatchdogConfig {
+  const stacks = Array.isArray(w.stacks) ? w.stacks.map((x) => str(x).trim()).filter(Boolean) : [];
+  const enabled = w.enabled === true;
+  const unknown = stacks.filter((x) => !rotomStacks.includes(x));
+  if (unknown.length) throw new Error(`[watchdog] stacks: no [[stack]] "${unknown[0]}" with a [stack.rotom]`);
+  if (enabled && !stacks.length) throw new Error("[watchdog] stacks must list the [[stack]] names it looks after");
+  const checks = w.checks === undefined ? [...WATCHDOG_CHECKS] : Array.isArray(w.checks) ? w.checks.map((x) => str(x).trim()) : [];
+  if (!checks.length || checks.some((x) => !(WATCHDOG_CHECKS as readonly string[]).includes(x))) {
+    throw new Error(`[watchdog] checks must list some of ${WATCHDOG_CHECKS.map((x) => `"${x}"`).join(", ")}`);
+  }
+  const action = w.action === undefined ? "restart" : str(w.action).trim();
+  if (action !== "restart" && action !== "reboot") throw new Error('[watchdog] action must be "restart" or "reboot"');
+  const maxPerDay = w.max_per_day === undefined ? 6 : Number(w.max_per_day);
+  if (!Number.isInteger(maxPerDay) || maxPerDay < 1) throw new Error("[watchdog] max_per_day must be a whole number, at least 1");
+  return {
+    enabled,
+    stacks,
+    checks: checks as WatchdogCheck[],
+    failingForMs: atLeast("[watchdog] failing_for", parseDuration(w.failing_for, 10 * 60_000), 3 * 60_000, "3m"),
+    action,
+    cooldownMs: atLeast("[watchdog] cooldown", parseDuration(w.cooldown, 30 * 60_000), 10 * 60_000, "10m"),
+    maxPerDay,
+    dryRun: w.dry_run === true,
+  };
 }
 
 function parseDatabase(d: Table): DatabaseConfig {

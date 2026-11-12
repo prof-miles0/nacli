@@ -58,7 +58,7 @@ the server; the browser only ever talks to Nacli.
   Dragonite and RotomNG are **up to date** with their GitHub releases.
 - Kōji, Golbat and the global rate limit per Dragonite, with the admin's controls (pause
   or reset the limit, reload proxies, accounts or Dragonite).
-- An **alerts bar on every page** for anything that needs attention.
+- An **alerts box** for anything that needs attention, with their count in amber beside Status in the sidebar.
 
 <p align="center">
   <img src="docs/screenshots/status.png" alt="Status: every Dragonite and RotomNG with its version and health" width="900">
@@ -68,7 +68,7 @@ the server; the browser only ever talks to Nacli.
 
 | Page | What you can do |
 |---|---|
-| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state, and the free accounts also by token and provider. Add one account or import a CSV. Move accounts to another stack: tick them, or pick how many available ones; their rows go from one Dragonite database to the other and both Dragonites reload their accounts (needs a `database` in both, and the grants below). |
+| **Accounts** | Totals per stack and state, by level, and one searchable list across every stack, filtered by state, and the free accounts also by token and provider. Add one account or import a CSV. Move accounts to another stack: tick them, or pick how many available ones; their rows go from one Dragonite database to the other and both Dragonites reload their accounts (needs a `database` in both, and the grants below). With its stack's `database`, click a username to see everything Dragonite stores about it (never its password or token) and edit its level, provider, email, password, warn/suspended/banned/invalid flags, login ban and refresh token; not while a worker is using it. |
 | **Areas** | Every area with its live workers. Create, view and edit them (with a map, routes from [Kōji](https://github.com/TurtIeSocks/Koji), every mode), enable or disable them, start or stop quests, and copy or move them between stacks. |
 | **Unbound Modes** | Level, Invasion and Scout modes: create, edit, delete and copy them; scout jobs on a map and the scout queue. |
 | **Proxies** | Every stack's proxies in one list: add one or import many, copy them to other stacks, enable, disable or delete them. |
@@ -114,6 +114,11 @@ the server; the browser only ever talks to Nacli.
 - **A database connection**: one MariaDB account for Golbat's database and each Dragonite's,
   granted only the tables and actions you use (reads, plus deleting spawnpoints and moving
   accounts), with a DB pill per part in the sidebar.
+- **Discord**: the alerts, the devices that stay disconnected and those with free workers
+  while their Dragonite is short of them, posted when they start and when they end, to as
+  many channels as you want, each with what it should get (`[[discord]]`).
+- **Watchdog** (off by default): restarts the devices of the chosen stacks that keep failing,
+  with an alert and a Discord message for each restart (`[watchdog]`).
 - **Help** in the user menu: how to connect every part of the stack, the database account's
   permissions, and what the running `config.toml` has connected.
 - Light and dark themes, and a layout made for phones too.
@@ -204,6 +209,7 @@ api_secret = "..."                 # its http_listener.secret
 | Key | Default | |
 |---|---|---|
 | `title` | `"Nacli"` | Name shown in the app. |
+| `public_url` | — | Nacli's address as people open it (e.g. `"https://nacli.example.com"`), so Discord messages carry buttons to their page (and Help). |
 | `listen` | `"0.0.0.0:7080"` | Address and port to listen on. |
 | `session_secret` | random | Signs session cookies. If empty, one is generated at startup and sessions are lost on restart. |
 | `session_ttl` | `"24h"` | How long a sign-in lasts. |
@@ -231,7 +237,7 @@ reports (with its `url`), so the stack's `name` can be anything.
   (sent as `X-Dragonite-Admin-Secret`), `headers` and `basic_auth`. With a `url`, the
   Accounts, Areas, Unbound Modes, Proxies, Scheduler and Status pages are enabled, and the
   controls act on that Dragonite. `database` (optional, needs `[database]`) names its
-  database on that server, used to move accounts between stacks; a DB pill next to Dragonite
+  database on that server, used to move accounts between stacks and to view and edit one; a DB pill next to Dragonite
   in the sidebar shows whether each one can be read. RotomNG has no database.
 
 `zapdos_instance` is each instance's `instance` label in Zapdos, and it only counts
@@ -276,8 +282,9 @@ To connect it:
    | Golbat | `spawnpoint` | `SELECT` | Spawnpoints page, spawnpoint backup, DB pill | No Spawnpoints page; the pill turns orange |
    | Golbat | `pokemon_area_stats` | `SELECT` | Encounters page | No Encounters history |
    | Golbat | `spawnpoint` | `DELETE` | Deleting spawnpoints (Spawnpoints › Delete) | The delete tool refuses |
-   | Each Dragonite | `account` | `SELECT` | DB pill, moving accounts | The pill turns orange |
+   | Each Dragonite | `account` | `SELECT` | DB pill, moving accounts, viewing one | The pill turns orange |
    | Each Dragonite | `account` | `INSERT`, `DELETE` | Moving accounts between stacks (Accounts › Move) | Moving refuses, nothing changes |
+   | Each Dragonite | `account` | `UPDATE` | Editing an account (click its username in Accounts) | Saving refuses, nothing changes |
 
    For example, with everything (leave out the lines you don't need), run as an administrator:
 
@@ -292,6 +299,7 @@ To connect it:
    -- Each Dragonite with a database
    GRANT SELECT ON dragonite_alpha.account TO 'nacli'@'%';
    GRANT INSERT, DELETE ON dragonite_alpha.account TO 'nacli'@'%';      -- moving accounts
+   GRANT UPDATE ON dragonite_alpha.account TO 'nacli'@'%';              -- editing accounts
 
    SHOW GRANTS FOR 'nacli'@'%';
    ```
@@ -330,6 +338,63 @@ they come from memory**. Nacli checks at startup, whenever `config.toml` changes
 and a warning asks to check that Zapdos still scrapes it. The memory history and the
 Statistics one are saved to `state_file` on exit and every 5 minutes, and loaded at start, so
 a restart keeps the charts. Rotom's charts can mix both.
+
+#### `[[discord]]` (optional)
+
+Posts problems to Discord channels, one `[[discord]]` per webhook (channel settings ›
+Integrations › Webhooks), each with what it should get. A problem is posted when it starts and
+again when it ends, once two checks a minute apart agree, so a blip posts nothing; what was
+posted is kept in `state_file`, so a restart does not post it again. Each one is a coloured
+card with its stack and its time in each reader's own time zone; with `[server] public_url`,
+it carries buttons to its page in Nacli (and to Help, for an alert).
+
+| Key | Default | |
+|---|---|---|
+| `webhook_url` | — | The webhook's address. A secret: it stays on the server and is never logged. |
+| `name` | `"webhook 1"`… | Its name in Help and the logs. |
+| `send` | all four | Some of `"alerts"` (the Status page's), `"devices"` (enabled devices that stay disconnected), `"underused"` (connected devices with free workers while their stack's Dragonite is short of workers: its areas and modes want more than they have) and `"watchdog"` (the devices the watchdog restarts, posted at once). |
+| `level` | `"warning"` | `"critical"` posts only the critical alerts. |
+| `stacks` | every one | Only the problems of these `[[stack]]` names. Problems of no stack (Golbat, duplicated accounts) go only to webhooks without `stacks`. |
+| `mention` | — | Put before each new problem, e.g. `"@here"` or `"<@&role id>"`. |
+| `device_offline_after` | `"5m"` | How long a device must stay disconnected (at least `"1m"`). Devices of a RotomNG that does not answer are left out: its own alert says so. |
+| `underused_after` | `"10m"` | How long a device must stay underused (at least `"1m"`). |
+| `remind_every` | never | Post the problems still open again this often, e.g. `"6h"`. |
+
+```toml
+[[discord]]                  # everything, for the admins
+name = "Admins"
+webhook_url = "https://discord.com/api/webhooks/…"
+
+[[discord]]                  # one stack's critical alerts and its devices, with a ping
+name = "Alpha"
+webhook_url = "https://discord.com/api/webhooks/…"
+send = ["alerts", "devices", "underused"]
+level = "critical"
+stacks = ["Alpha"]
+mention = "@here"
+```
+
+Help › Discord lists the webhooks, with a button that sends each a test message.
+
+#### `[watchdog]` (optional, off by default)
+
+Restarts the devices of the chosen stacks when they keep failing while connected to Rotom:
+no worker connected (`no_workers`), or Dragonite workers on it that have sent no data
+(`no_data`). A disconnected device cannot be restarted (Rotom reaches it through its
+connection); `[[discord]]`'s `devices` reports those. It holds back when most of a stack's
+devices fail at once (that is its Dragonite or the network), and each restart shows on Status
+for an hour and goes to the webhooks that send `"watchdog"`.
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `false` | Nothing happens until it is `true`. |
+| `stacks` | — | The `[[stack]]` names it looks after (needed when enabled). |
+| `checks` | both | Some of `"no_workers"` and `"no_data"`. |
+| `failing_for` | `"10m"` | How long a device must keep failing (at least `"3m"`). |
+| `action` | `"restart"` | `"restart"` restarts the app, `"reboot"` the whole device. |
+| `cooldown` | `"30m"` | Least time between two restarts of one device (at least `"10m"`). |
+| `max_per_day` | `6` | Most restarts of one device in 24 h. |
+| `dry_run` | `false` | Only say what it would do: alerts and messages, no restart. |
 
 </details>
 

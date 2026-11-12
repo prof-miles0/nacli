@@ -1,8 +1,10 @@
 // Dragonite's own databases on the stack's MariaDB ([database] plus each
-// [stack.dragonite] database): moving accounts from one stack to another.
-// Both databases live on the same server, so one transaction covers both.
+// [stack.dragonite] database): moving accounts from one stack to another, and
+// reading and editing one account.
+// Both databases of a move live on the same server, so one transaction covers both.
 
 import type { RowDataPacket } from "mysql2/promise";
+import type { AccountRow } from "../shared/types.ts";
 import type { DatabaseConfig } from "./config.ts";
 import { dbPool } from "./db.ts";
 
@@ -71,4 +73,90 @@ export async function moveAccountRows(db: DatabaseConfig, from: string, to: stri
   } finally {
     conn.release();
   }
+}
+
+/** The columns read as they are; the flags come back as booleans. */
+const PLAIN = [
+  "username", "email", "provider", "level", "warn_expiration", "auth_banned", "ar_ban_state", "ar_ban_last_checked",
+  "last_selected", "last_released", "last_disabled", "last_banned", "last_suspended", "consecutive_disable_count",
+  "last_refreshed", "next_available_time",
+];
+const FLAGS = ["warn", "suspended", "banned", "invalid"];
+
+/** The account, or undefined when this database does not have it. */
+export async function readAccount(db: DatabaseConfig, database: string, username: string): Promise<AccountRow | undefined> {
+  const cols = [...PLAIN, ...FLAGS].map(quote).join(", ");
+  const [rows] = await dbPool(db, database).query<RowDataPacket[]>({
+    sql: `SELECT ${cols}, refresh_token <> '' AS has_refresh_token FROM account WHERE username = ?`,
+    values: [username],
+    timeout: 8000,
+  });
+  const r = rows[0];
+  if (!r) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const c of PLAIN) out[c] = r[c] ?? null;
+  for (const c of [...FLAGS, "has_refresh_token"]) out[c] = !!Number(r[c]);
+  return out as unknown as AccountRow;
+}
+
+/**
+ * Checks what the browser sent and turns it into columns: unknown fields
+ * and values out of range are refused, not ignored.
+ */
+export function accountUpdates(body: Record<string, unknown>): { set: Record<string, unknown> } | { error: string } {
+  const set: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    switch (k) {
+      case "password":
+        if (typeof v !== "string" || !v || v.length > 64 || v.trim() !== v) return { error: "the password must be 1 to 64 characters, without spaces at the ends" };
+        set.password = v;
+        break;
+      case "email":
+        if (v !== null && (typeof v !== "string" || v.length > 320 || /\s/.test(v))) return { error: "the email must be up to 320 characters, without spaces" };
+        set.email = v || null;
+        break;
+      case "provider":
+        if (typeof v !== "string" || !/^[a-z0-9_]{1,32}$/.test(v)) return { error: "unknown provider" };
+        set.provider = v;
+        break;
+      case "level":
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 80) return { error: "the level must be a whole number from 0 to 80" };
+        set.level = v;
+        break;
+      case "warn_expiration":
+        if (!Number.isInteger(v) || (v as number) < 0 || (v as number) > 4_294_967_295) return { error: "invalid warning expiry" };
+        set.warn_expiration = v;
+        break;
+      case "warn":
+      case "suspended":
+      case "banned":
+      case "invalid":
+        if (typeof v !== "boolean") return { error: `${k} must be true or false` };
+        set[k] = v ? 1 : 0;
+        break;
+      case "clear_auth_ban":
+        if (v !== true) return { error: "clear_auth_ban can only be true" };
+        set.auth_banned = 0;
+        break;
+      case "clear_refresh_token":
+        if (v !== true) return { error: "clear_refresh_token can only be true" };
+        set.refresh_token = "";
+        break;
+      default:
+        return { error: `${k} cannot be changed` };
+    }
+  }
+  if (!Object.keys(set).length) return { error: "nothing to change" };
+  return { set };
+}
+
+/** Writes the changes; false when the account is not there any more. */
+export async function updateAccount(db: DatabaseConfig, database: string, username: string, set: Record<string, unknown>): Promise<boolean> {
+  const cols = Object.keys(set);
+  const [r] = await dbPool(db, database).query({
+    sql: `UPDATE account SET ${cols.map((c) => `${quote(c)} = ?`).join(", ")} WHERE username = ?`,
+    values: [...cols.map((c) => set[c]), username],
+    timeout: 8000,
+  });
+  return (r as { affectedRows: number }).affectedRows > 0;
 }
