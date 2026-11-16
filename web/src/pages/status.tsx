@@ -46,7 +46,7 @@ function Row({ label, level, value, detail, extra }: { label: string; level: Lev
   );
 }
 
-/** Warnings at the top, as the admin's banners: degraded rate limit, missing Kōji/Golbat, updates. */
+/** Warnings at the top, as the admin's banners: Dragonite or Golbat down, missing Kōji, data lost. Updates are in VersionsSummary. */
 function Banners({ data }: { data: SystemStatus }) {
   const items: { key: string; level: Level; text: ReactNode }[] = [];
   for (const d of data.dragonite) {
@@ -68,37 +68,6 @@ function Banners({ data }: { data: SystemStatus }) {
         ),
       });
     }
-    if (d.update) {
-      items.push({
-        key: `update:${d.id}`,
-        level: "info",
-        text: (
-          <>
-            <b>{d.name}</b> runs v{d.version}:{" "}
-            <a href={`${RELEASES}${d.update}`} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-              v{d.update}
-            </a>{" "}
-            is available.
-          </>
-        ),
-      });
-    }
-  }
-  for (const r of data.rotom) {
-    if (!r.update) continue;
-    items.push({
-      key: `rotom-update:${r.id}`,
-      level: "info",
-      text: (
-        <>
-          <b>Rotom {r.name}</b> runs v{r.version}:{" "}
-          <a href={`${ROTOM_RELEASES}${r.update}`} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-            v{r.update}
-          </a>{" "}
-          is available.
-        </>
-      ),
-    });
   }
   if (data.golbat?.api && data.golbat.apiOk === false) {
     items.push({ key: "golbat-api", level: "error", text: <><b>Golbat</b> API isn't answering{data.golbat.apiError ? `: ${data.golbat.apiError}` : ""}</> });

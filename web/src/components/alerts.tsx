@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ChevronDown, CircleHelp, OctagonAlert } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, ChevronDown, CircleHelp, OctagonAlert } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { type Alert, computeAlerts } from "@shared/alerts";
@@ -64,10 +64,41 @@ export function AlertCount() {
   const n = alerts.length;
   return (
     <span
-      className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-amber-500/20 px-1.5 text-[11px] font-semibold text-amber-400 tabular-nums"
+      className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500/20 px-1.5 text-[11px] font-semibold text-amber-400 tabular-nums"
       title={n === 1 ? "1 problem" : `${n} problems`}
       aria-label={n === 1 ? "1 problem" : `${n} problems`}
     >
+      {n}
+    </span>
+  );
+}
+
+/**
+ * How many Dragonites and Rotoms can be updated, beside Status in the sidebar:
+ * the list is in the versions box on that page. The same query as Status,
+ * so on that page it adds no request.
+ */
+export function UpdateCount() {
+  const { data: app } = useAppInfo();
+  const q = useQuery({
+    queryKey: ["system-status"],
+    queryFn: endpoints.systemStatus,
+    enabled: !!(app?.dragonite.length || app?.instances.length),
+    refetchInterval: 300_000,
+  });
+  if (!app || !q.data) return null;
+  const reachable = new Set(app.instances.filter((i) => i.reachable).map((i) => i.id));
+  const n =
+    q.data.dragonite.filter((d) => d.reachable && d.update).length + q.data.rotom.filter((r) => r.update && reachable.has(r.id)).length;
+  if (!n) return null;
+  const label = n === 1 ? "1 update available" : `${n} updates available`;
+  return (
+    <span
+      className="inline-flex h-5 items-center gap-0.5 rounded-full bg-blue-500/15 px-1.5 text-[11px] font-semibold text-blue-400 tabular-nums"
+      title={label}
+      aria-label={label}
+    >
+      <ArrowUpCircle className="size-3" />
       {n}
     </span>
   );

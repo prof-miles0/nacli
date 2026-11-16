@@ -25,7 +25,7 @@ import { endpoints } from "@/lib/api";
 import { isUp, linkState } from "@/lib/dragonite";
 import { useAppInfo } from "@/lib/state";
 import { cn, fmt } from "@/lib/utils";
-import { AlertCount } from "./alerts";
+import { AlertCount, UpdateCount } from "./alerts";
 import { useAuth } from "./auth";
 import { Toaster } from "./toaster";
 import { UserMenu } from "./user-menu";
@@ -361,7 +361,12 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               >
                 <item.icon />
                 {item.label}
-                {item.to === "/status" ? <AlertCount /> : null}
+                {item.to === "/status" ? (
+                  <span className="ml-auto flex items-center gap-1">
+                    <UpdateCount />
+                    <AlertCount />
+                  </span>
+                ) : null}
               </NavLink>
             ))}
           </div>
